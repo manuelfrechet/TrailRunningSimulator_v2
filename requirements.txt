@@ -1,0 +1,6 @@
+streamlit
+pandas
+numpy
+fitdecode
+gpxpy
+scipy
