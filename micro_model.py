@@ -33,12 +33,12 @@ from scipy.spatial import cKDTree
 #   - query the 2 closest historical states
 #   - interpolate their observed next-50 m times using inverse distance
 #
-# Important:
+# IMPORTANT:
 #
 #   - no macro model dependency
 #   - no macro correction
 #   - no clipping
-#   - no weighting chosen by hand
+#   - no hand-tuned feature weights
 # -----------------------------------------------------------------------------
 
 
@@ -55,7 +55,6 @@ STATE_COLUMNS = [
 TARGET_COLUMN = "actual_segment_time_s"
 
 N_ANALOGUES = 2
-
 EPSILON = 1e-12
 
 
@@ -93,10 +92,9 @@ class MicroModel:
         segment_grade_pct: Any,
     ) -> pd.DataFrame:
         """
-        Build a query dataframe with exactly the same seven dimensions
-        used by the historical model.
+        Build one or more query rows with exactly the same seven variables
+        used in the historical analog model.
         """
-
         return pd.DataFrame(
             {
                 "distance_from_start_m": np.atleast_1d(
@@ -128,9 +126,8 @@ class MicroModel:
         query_df: pd.DataFrame,
     ) -> np.ndarray:
         """
-        Standardize a query using the historical means/scales.
+        Standardize a query using the historical means and scales.
         """
-
         query = query_df[
             self.state_columns
         ].copy()
@@ -141,14 +138,12 @@ class MicroModel:
                 errors="coerce",
             )
 
-        # Missing query values are replaced with the historical mean.
         query = query.fillna(
             self.means
         )
 
         standardized = (
-            query
-            - self.means
+            query - self.means
         ) / self.scales
 
         return standardized.to_numpy(
@@ -162,14 +157,19 @@ class MicroModel:
         """
         Predict one or more next-50 m times.
 
-        Returns one row per query with:
+        Returns:
             micro_predicted_time_s
-            analogue distances
-            analogue observed times
-            analogue activity IDs/names
-            analogue historical positions
+            analogue_1_distance
+            analogue_1_time_s
+            analogue_1_activity_id
+            analogue_1_activity_name
+            analogue_1_distance_from_start_m
+            analogue_2_distance
+            analogue_2_time_s
+            analogue_2_activity_id
+            analogue_2_activity_name
+            analogue_2_distance_from_start_m
         """
-
         if query_df is None or query_df.empty:
             return pd.DataFrame()
 
@@ -194,15 +194,6 @@ class MicroModel:
             k=N_ANALOGUES,
         )
 
-        # ---------------------------------------------------------------------
-        # cKDTree returns 1D arrays for k=1 and 2D arrays for k=2.
-        # Normalize explicitly.
-        # ---------------------------------------------------------------------
-
-        if N_ANALOGUES == 1:
-            distances = distances.reshape(-1, 1)
-            indices = indices.reshape(-1, 1)
-
         distances = np.asarray(
             distances,
             dtype=float,
@@ -213,19 +204,18 @@ class MicroModel:
             dtype=int,
         )
 
-        # ---------------------------------------------------------------------
-        # Retrieve analogue target times.
-        # ---------------------------------------------------------------------
+        # cKDTree returns a 1D array when k=1 and 2D for k>1.
+        if distances.ndim == 1:
+            distances = distances.reshape(-1, 1)
+
+        if indices.ndim == 1:
+            indices = indices.reshape(-1, 1)
 
         analogue_times = (
             self.historical_target_times_s[
                 indices
             ]
         )
-
-        # ---------------------------------------------------------------------
-        # Inverse-distance interpolation.
-        # ---------------------------------------------------------------------
 
         predictions = np.empty(
             len(query_df),
@@ -235,7 +225,6 @@ class MicroModel:
         for row_index in range(
             len(query_df)
         ):
-
             row_distances = distances[
                 row_index
             ]
@@ -244,33 +233,23 @@ class MicroModel:
                 row_index
             ]
 
-            # Exact / practically exact match.
+            # Exact match.
             if row_distances[0] <= EPSILON:
-                predictions[
-                    row_index
-                ] = float(
+                predictions[row_index] = float(
                     row_times[0]
                 )
                 continue
 
             weights = 1.0 / (
-                row_distances
-                + EPSILON
+                row_distances + EPSILON
             )
 
-            predictions[
-                row_index
-            ] = float(
+            predictions[row_index] = float(
                 np.sum(
-                    weights
-                    * row_times
+                    weights * row_times
                 )
                 / np.sum(weights)
             )
-
-        # ---------------------------------------------------------------------
-        # Build result.
-        # ---------------------------------------------------------------------
 
         result = query_df[
             self.state_columns
@@ -280,18 +259,17 @@ class MicroModel:
             "micro_predicted_time_s"
         ] = predictions
 
-        # Analogue 1.
+        # ---------------------------------------------------------------------
+        # Analogue 1
+        # ---------------------------------------------------------------------
+
         result[
             "analogue_1_distance"
-        ] = distances[
-            :, 0
-        ]
+        ] = distances[:, 0]
 
         result[
             "analogue_1_time_s"
-        ] = analogue_times[
-            :, 0
-        ]
+        ] = analogue_times[:, 0]
 
         result[
             "analogue_1_activity_id"
@@ -311,18 +289,17 @@ class MicroModel:
             indices[:, 0]
         ]
 
-        # Analogue 2.
+        # ---------------------------------------------------------------------
+        # Analogue 2
+        # ---------------------------------------------------------------------
+
         result[
             "analogue_2_distance"
-        ] = distances[
-            :, 1
-        ]
+        ] = distances[:, 1]
 
         result[
             "analogue_2_time_s"
-        ] = analogue_times[
-            :, 1
-        ]
+        ] = analogue_times[:, 1]
 
         result[
             "analogue_2_activity_id"
@@ -356,9 +333,8 @@ class MicroModel:
         segment_grade_pct: float,
     ) -> dict[str, Any]:
         """
-        Convenience method for one GPX 50 m query.
+        Predict one future 50 m segment.
         """
-
         query_df = self.build_query(
             distance_from_start_m=distance_from_start_m,
             cumulative_ascent_m=cumulative_ascent_m,
@@ -384,7 +360,6 @@ class MicroModel:
         """
         Return basic information about the historical analog library.
         """
-
         return {
             "training_rows": self.training_rows,
             "training_activities": self.training_activities,
@@ -395,12 +370,8 @@ class MicroModel:
                 self.state_columns
             ),
             "n_analogues": N_ANALOGUES,
-            "distance_metric": (
-                "standardized Euclidean"
-            ),
-            "interpolation": (
-                "inverse-distance weighted"
-            ),
+            "distance_metric": "standardized Euclidean",
+            "interpolation": "inverse-distance weighted",
         }
 
 
@@ -415,7 +386,6 @@ def _safe_numeric_series(
     """
     Return one clean numeric 1D Series.
     """
-
     obj = df.loc[:, column]
 
     if isinstance(obj, pd.DataFrame):
@@ -431,9 +401,8 @@ def _prepare_training_data(
     learning_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Clean the historical state/target data.
+    Clean the historical state and target data.
     """
-
     required_columns = (
         STATE_COLUMNS
         + [
@@ -455,10 +424,8 @@ def _prepare_training_data(
             + ", ".join(missing)
         )
 
-    columns = required_columns
-
-    df = learning_df[
-        columns
+    training_df = learning_df[
+        required_columns
     ].copy()
 
     for column in (
@@ -467,12 +434,12 @@ def _prepare_training_data(
             TARGET_COLUMN,
         ]
     ):
-        df[column] = pd.to_numeric(
-            df[column],
+        training_df[column] = pd.to_numeric(
+            training_df[column],
             errors="coerce",
         )
 
-    df = df.dropna(
+    training_df = training_df.dropna(
         subset=(
             STATE_COLUMNS
             + [
@@ -481,15 +448,17 @@ def _prepare_training_data(
         )
     ).copy()
 
-    # Target must be physically positive.
-    df = df[
-        df[TARGET_COLUMN] > 0.0
+    # Target must be positive.
+    training_df = training_df[
+        training_df[
+            TARGET_COLUMN
+        ] > 0.0
     ].copy()
 
-    if df.empty:
+    if training_df.empty:
         return pd.DataFrame()
 
-    return df.reset_index(
+    return training_df.reset_index(
         drop=True
     )
 
@@ -504,7 +473,6 @@ def fit_micro_model(
     """
     Build the V0 historical analog library and KD-tree.
     """
-
     if learning_df is None or learning_df.empty:
         raise ValueError(
             "Historical learning dataset is empty."
@@ -557,8 +525,7 @@ def fit_micro_model(
     )
 
     standardized_states = (
-        state_frame
-        - means
+        state_frame - means
     ) / scales
 
     historical_states = (
@@ -568,7 +535,7 @@ def fit_micro_model(
     )
 
     # -------------------------------------------------------------------------
-    # Build KD-tree ONCE.
+    # Build KD-tree once.
     # -------------------------------------------------------------------------
 
     tree = cKDTree(
@@ -576,14 +543,13 @@ def fit_micro_model(
     )
 
     # -------------------------------------------------------------------------
-    # Historical outcomes.
+    # Historical outcomes and identifiers.
     # -------------------------------------------------------------------------
 
     historical_target_times_s = (
         training_df[
             TARGET_COLUMN
-        ]
-        .to_numpy(
+        ].to_numpy(
             dtype=float
         )
     )
@@ -591,30 +557,23 @@ def fit_micro_model(
     historical_activity_ids = (
         training_df[
             "activity_id"
-        ]
-        .to_numpy()
+        ].to_numpy()
     )
 
     historical_activity_names = (
         training_df[
             "activity_name"
-        ]
-        .astype(str)
+        ].astype(str)
         .to_numpy()
     )
 
     historical_distances_m = (
         training_df[
             "distance_from_start_m"
-        ]
-        .to_numpy(
+        ].to_numpy(
             dtype=float
         )
     )
-
-    # -------------------------------------------------------------------------
-    # Activity count.
-    # -------------------------------------------------------------------------
 
     training_activities = int(
         training_df[
@@ -622,16 +581,19 @@ def fit_micro_model(
         ].nunique()
     )
 
+    # -------------------------------------------------------------------------
+    # IMPORTANT:
+    #
+    # Do not add unrelated fields here.
+    # The dataclass is intentionally minimal.
+    # -------------------------------------------------------------------------
+
     return MicroModel(
         state_columns=list(
             STATE_COLUMNS
         ),
         means=means,
         scales=scales,
-        coefficients=np.empty(
-            0,
-            dtype=float,
-        ),
         historical_states=historical_states,
         historical_target_times_s=(
             historical_target_times_s
@@ -669,7 +631,6 @@ def predict_micro_segment(
     """
     Predict one future 50 m segment.
     """
-
     if model is None:
         raise ValueError(
             "Micro model is None."
@@ -684,4 +645,4 @@ def predict_micro_segment(
         segment_descent_m=segment_descent_m,
         segment_grade_pct=segment_grade_pct,
     )
-  
+    
