@@ -16,6 +16,9 @@ from macro_model import (
 
 from learning_diagnostics import (
     build_learning_diagnostic_sample,
+    build_activity_learning_summary,
+    build_activity_macro_summary,
+    build_extreme_transition_summary,
 )
 
 
@@ -49,7 +52,7 @@ if not uploaded_fit_files:
 
 
 # -----------------------------------------------------------------------------
-# Run learning
+# Run historical learning
 # -----------------------------------------------------------------------------
 
 if st.button(
@@ -77,7 +80,13 @@ if st.button(
             st.stop()
 
         # ---------------------------------------------------------------------
-        # Learning dataset summary
+        # Store learning dataset
+        # ---------------------------------------------------------------------
+
+        st.session_state["learning_df"] = learning_df
+
+        # ---------------------------------------------------------------------
+        # Global learning summary
         # ---------------------------------------------------------------------
 
         summary = summarize_learning_dataset(
@@ -131,7 +140,7 @@ if st.button(
             )
 
         # ---------------------------------------------------------------------
-        # Preview historical dataset
+        # Historical transition preview
         # ---------------------------------------------------------------------
 
         with st.expander(
@@ -144,7 +153,7 @@ if st.button(
             )
 
         # ---------------------------------------------------------------------
-        # Download complete learning dataset
+        # Complete learning dataset export
         # ---------------------------------------------------------------------
 
         st.download_button(
@@ -155,7 +164,7 @@ if st.button(
         )
 
         # ---------------------------------------------------------------------
-        # Compact diagnostics
+        # Compact diagnostic sample
         # ---------------------------------------------------------------------
 
         diagnostic_df = build_learning_diagnostic_sample(
@@ -172,6 +181,79 @@ if st.button(
             )
 
         # ---------------------------------------------------------------------
+        # Per-activity learning summary
+        # ---------------------------------------------------------------------
+
+        activity_learning_summary = (
+            build_activity_learning_summary(
+                learning_df
+            )
+        )
+
+        st.session_state[
+            "activity_learning_summary"
+        ] = activity_learning_summary
+
+        st.subheader(
+            "Per-activity learning summary"
+        )
+
+        if activity_learning_summary.empty:
+            st.warning(
+                "No per-activity learning summary could be generated."
+            )
+        else:
+            st.dataframe(
+                activity_learning_summary,
+                width="stretch",
+            )
+
+            st.download_button(
+                label="Download per-activity learning summary",
+                data=activity_learning_summary.to_csv(
+                    index=False
+                ),
+                file_name="activity_learning_summary_v0.csv",
+                mime="text/csv",
+            )
+
+        # ---------------------------------------------------------------------
+        # Extreme transitions
+        # ---------------------------------------------------------------------
+
+        extreme_df = build_extreme_transition_summary(
+            learning_df,
+            n_each=20,
+        )
+
+        st.session_state[
+            "extreme_transition_summary"
+        ] = extreme_df
+
+        st.subheader(
+            "Fastest and slowest historical transitions"
+        )
+
+        if extreme_df.empty:
+            st.warning(
+                "No extreme-transition diagnostics could be generated."
+            )
+        else:
+            st.dataframe(
+                extreme_df,
+                width="stretch",
+            )
+
+            st.download_button(
+                label="Download fastest / slowest transitions",
+                data=extreme_df.to_csv(
+                    index=False
+                ),
+                file_name="extreme_transitions_v0.csv",
+                mime="text/csv",
+            )
+
+        # ---------------------------------------------------------------------
         # Macro model
         # ---------------------------------------------------------------------
 
@@ -182,18 +264,19 @@ if st.button(
                 learning_df
             )
 
-        st.session_state["learning_df"] = learning_df
-        st.session_state["macro_model"] = macro_model
-
-        # ---------------------------------------------------------------------
-        # Macro model summary
-        # ---------------------------------------------------------------------
-
-        macro_summary = macro_model.summary()
+        st.session_state[
+            "macro_model"
+        ] = macro_model
 
         st.success(
             "Macro model fitted successfully."
         )
+
+        # ---------------------------------------------------------------------
+        # Macro summary
+        # ---------------------------------------------------------------------
+
+        macro_summary = macro_model.summary()
 
         st.subheader("Macro model")
 
@@ -228,7 +311,7 @@ if st.button(
         )
 
         # ---------------------------------------------------------------------
-        # Historical macro prediction check
+        # Macro historical check
         # ---------------------------------------------------------------------
 
         macro_profile_df = predict_macro_profile(
@@ -255,9 +338,12 @@ if st.button(
 
         macro_check_df[
             "macro_predicted_cumulative_time_s"
-        ] = macro_profile_df[
-            "macro_predicted_cumulative_time_s"
-        ].to_numpy()
+        ] = (
+            macro_profile_df[
+                "macro_predicted_cumulative_time_s"
+            ]
+            .to_numpy()
+        )
 
         macro_check_df[
             "macro_error_s"
@@ -275,6 +361,10 @@ if st.button(
         ] = macro_check_df[
             "macro_error_s"
         ].abs()
+
+        # ---------------------------------------------------------------------
+        # Global macro check metrics
+        # ---------------------------------------------------------------------
 
         st.subheader(
             "Historical macro-model check"
@@ -305,6 +395,48 @@ if st.button(
                 f"{macro_check_df['macro_error_s'].mean():.1f} s",
             )
 
+        # ---------------------------------------------------------------------
+        # Per-activity macro diagnostic
+        # ---------------------------------------------------------------------
+
+        activity_macro_summary = (
+            build_activity_macro_summary(
+                learning_df,
+                macro_model,
+            )
+        )
+
+        st.session_state[
+            "activity_macro_summary"
+        ] = activity_macro_summary
+
+        st.subheader(
+            "Per-activity macro-model summary"
+        )
+
+        if activity_macro_summary.empty:
+            st.warning(
+                "No per-activity macro summary could be generated."
+            )
+        else:
+            st.dataframe(
+                activity_macro_summary,
+                width="stretch",
+            )
+
+            st.download_button(
+                label="Download per-activity macro summary",
+                data=activity_macro_summary.to_csv(
+                    index=False
+                ),
+                file_name="activity_macro_summary_v0.csv",
+                mime="text/csv",
+            )
+
+        # ---------------------------------------------------------------------
+        # Historical macro check preview
+        # ---------------------------------------------------------------------
+
         with st.expander(
             "First 100 historical macro predictions",
             expanded=True,
@@ -315,11 +447,35 @@ if st.button(
             )
 
         st.download_button(
-            label="Download macro historical check",
+            label="Download complete macro historical check",
             data=macro_check_df.to_csv(index=False),
             file_name="macro_historical_check_v0.csv",
             mime="text/csv",
         )
+
+        # ---------------------------------------------------------------------
+        # Macro residual information
+        # ---------------------------------------------------------------------
+
+        residual_col1, residual_col2, residual_col3 = st.columns(3)
+
+        with residual_col1:
+            st.metric(
+                "Macro residual median",
+                f"{macro_summary['residual_median_s']:.1f} s",
+            )
+
+        with residual_col2:
+            st.metric(
+                "Macro residual Q10",
+                f"{macro_summary['residual_q10_s']:.1f} s",
+            )
+
+        with residual_col3:
+            st.metric(
+                "Macro residual Q90",
+                f"{macro_summary['residual_q90_s']:.1f} s",
+            )
 
     except Exception as exc:
 
@@ -328,4 +484,21 @@ if st.button(
         )
 
         st.exception(exc)
-        
+
+
+# -----------------------------------------------------------------------------
+# Persisted results after Streamlit rerun
+# -----------------------------------------------------------------------------
+
+if (
+    "activity_learning_summary"
+    in st.session_state
+    and st.session_state[
+        "activity_learning_summary"
+    ] is not None
+):
+
+    # No additional work here.
+    # This section intentionally does not recompute anything.
+    pass
+    
