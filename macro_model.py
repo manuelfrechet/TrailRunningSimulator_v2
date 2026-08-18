@@ -8,38 +8,60 @@ import pandas as pd
 
 
 # -----------------------------------------------------------------------------
-# V0 macro model
+# V0 Macro model
 # -----------------------------------------------------------------------------
 #
-# Purpose:
-#   Learn a coarse relationship between:
+# Objective:
 #
-#       distance from start
-#       cumulative ascent
-#       cumulative descent
+#   Learn:
 #
-#   and:
+#       cumulative_elapsed_time
+#       =
+#       M(
+#           distance_from_start,
+#           cumulative_ascent,
+#           cumulative_descent
+#       )
 #
-#       cumulative elapsed time
+# V0 model:
 #
-# Model form:
+#   - linear terms
+#   - quadratic terms
+#   - pairwise interaction terms
 #
-#   standardized linear + quadratic + interaction terms
+# IMPORTANT:
 #
-# This is deliberately simple for V0.
+#   The model is anchored at the physical race origin:
 #
-# The macro model is completely independent from the micro model.
-# It does NOT modify, constrain, blend with, or correct the micro prediction.
+#       M(0, 0, 0) = 0
+#
+#   This is enforced structurally.
+#
+#   There is NO free intercept.
+#
+#   Macro and micro remain completely independent.
+#
 # -----------------------------------------------------------------------------
 
+RIDGE_LAMBDA = 1e-4
+
+
+# -----------------------------------------------------------------------------
+# Data container
+# -----------------------------------------------------------------------------
 
 @dataclass
 class MacroModel:
     feature_names: list[str]
-    means: pd.Series
+
+    # Scaling factors only.
+    #
+    # IMPORTANT:
+    # These are NOT means.
+    # Coordinates remain anchored at zero.
     scales: pd.Series
+
     coefficients: np.ndarray
-    intercept: float
 
     residual_median_s: float
     residual_q10_s: float
@@ -54,8 +76,10 @@ class MacroModel:
 
     min_distance_m: float
     max_distance_m: float
+
     min_cumulative_ascent_m: float
     max_cumulative_ascent_m: float
+
     min_cumulative_descent_m: float
     max_cumulative_descent_m: float
 
@@ -66,7 +90,11 @@ class MacroModel:
         cumulative_descent_m: Any,
     ) -> np.ndarray:
         """
-        Predict cumulative elapsed time from macro state variables.
+        Predict cumulative elapsed time.
+
+        The returned function satisfies:
+
+            M(0, 0, 0) = 0
         """
 
         frame = pd.DataFrame(
@@ -85,16 +113,15 @@ class MacroModel:
 
         X = _build_design_matrix(
             frame=frame,
-            means=self.means,
             scales=self.scales,
         )
 
-        prediction = (
-            self.intercept
-            + X @ self.coefficients
-        )
+        prediction = X @ self.coefficients
 
-        return prediction
+        return np.asarray(
+            prediction,
+            dtype=float,
+        )
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -117,19 +144,6 @@ class MacroModel:
 
 
 # -----------------------------------------------------------------------------
-# Configuration
-# -----------------------------------------------------------------------------
-
-BASE_FEATURES = [
-    "distance_from_start_m",
-    "cumulative_ascent_m",
-    "cumulative_descent_m",
-]
-
-RIDGE_LAMBDA = 1e-4
-
-
-# -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
 
@@ -138,7 +152,9 @@ def _safe_numeric_series(
     column: str,
 ) -> pd.Series:
     """
-    Return one clean numeric Series.
+    Return a clean numeric 1D Series.
+
+    Handles duplicate-column edge cases defensively.
     """
     if df is None or df.empty:
         return pd.Series(
@@ -157,14 +173,13 @@ def _safe_numeric_series(
     )
 
 
-def _build_standardized_base(
+def _prepare_macro_variables(
     frame: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+) -> pd.DataFrame:
     """
-    Standardize the three macro variables.
+    Extract the three canonical macro variables.
     """
-
-    base = pd.DataFrame(
+    return pd.DataFrame(
         {
             "distance_from_start_m": _safe_numeric_series(
                 frame,
@@ -181,12 +196,23 @@ def _build_standardized_base(
         }
     )
 
-    means = base.mean(
-        axis=0,
-        skipna=True,
-    )
 
-    scales = base.std(
+def _calculate_scales(
+    variables: pd.DataFrame,
+) -> pd.Series:
+    """
+    Calculate characteristic scales for numerical conditioning.
+
+    These are scales only; we deliberately do NOT center the variables.
+
+    Therefore:
+        x = 0
+        a = 0
+        d = 0
+
+    remains the origin after scaling.
+    """
+    scales = variables.std(
         axis=0,
         skipna=True,
     )
@@ -198,25 +224,20 @@ def _build_standardized_base(
 
     scales = scales.fillna(1.0)
 
-    standardized = (
-        base.fillna(means)
-        - means
-    ) / scales
-
-    return (
-        standardized,
-        means,
-        scales,
+    # Avoid pathological tiny scales.
+    scales = scales.clip(
+        lower=1e-9,
     )
+
+    return scales
 
 
 def _build_design_matrix(
     frame: pd.DataFrame,
-    means: pd.Series,
     scales: pd.Series,
 ) -> np.ndarray:
     """
-    Build V0 macro design matrix.
+    Build the anchored V0 macro basis.
 
     Variables:
         d
@@ -224,49 +245,44 @@ def _build_design_matrix(
         A-
 
     plus:
-
         d²
         A+²
         A-²
         d*A+
         d*A-
         A+*A-
+
+    All terms vanish at:
+        d = A+ = A- = 0
+
+    Therefore:
+        M(0,0,0) = 0
     """
 
-    base = pd.DataFrame(
-        {
-            "distance_from_start_m": _safe_numeric_series(
-                frame,
-                "distance_from_start_m",
-            ),
-            "cumulative_ascent_m": _safe_numeric_series(
-                frame,
-                "cumulative_ascent_m",
-            ),
-            "cumulative_descent_m": _safe_numeric_series(
-                frame,
-                "cumulative_descent_m",
-            ),
-        }
+    variables = _prepare_macro_variables(
+        frame
     )
 
-    base = (
-        base.fillna(means)
-    )
+    variables = variables.fillna(0.0)
 
-    z = (
-        base - means
-    ) / scales
-
-    d = z["distance_from_start_m"].to_numpy(
+    d = (
+        variables["distance_from_start_m"]
+        / float(scales["distance_from_start_m"])
+    ).to_numpy(
         dtype=float
     )
 
-    a = z["cumulative_ascent_m"].to_numpy(
+    a = (
+        variables["cumulative_ascent_m"]
+        / float(scales["cumulative_ascent_m"])
+    ).to_numpy(
         dtype=float
     )
 
-    de = z["cumulative_descent_m"].to_numpy(
+    de = (
+        variables["cumulative_descent_m"]
+        / float(scales["cumulative_descent_m"])
+    ).to_numpy(
         dtype=float
     )
 
@@ -287,58 +303,65 @@ def _build_design_matrix(
     return X
 
 
-def _fit_ridge(
+def _fit_ridge_without_intercept(
     X: np.ndarray,
     y: np.ndarray,
     ridge_lambda: float,
-) -> tuple[float, np.ndarray]:
+) -> np.ndarray:
     """
-    Ridge regression with an unpenalized intercept.
+    Ridge regression WITHOUT an intercept.
+
+    This is deliberate because the mathematical model is constrained to:
+
+        M(0,0,0) = 0
     """
+    if X.ndim != 2:
+        raise ValueError(
+            "Macro design matrix must be 2-dimensional."
+        )
 
-    n_samples, n_features = X.shape
+    if y.ndim != 1:
+        raise ValueError(
+            "Macro target vector must be 1-dimensional."
+        )
 
-    X_augmented = np.column_stack(
-        [
-            np.ones(n_samples),
-            X,
-        ]
-    )
+    if len(y) == 0:
+        raise ValueError(
+            "Macro target vector is empty."
+        )
+
+    n_features = X.shape[1]
 
     penalty = np.eye(
-        n_features + 1
+        n_features
     )
 
-    penalty[0, 0] = 0.0
-
     lhs = (
-        X_augmented.T @ X_augmented
+        X.T @ X
         + ridge_lambda * penalty
     )
 
     rhs = (
-        X_augmented.T @ y
+        X.T @ y
     )
 
-    beta = np.linalg.solve(
+    coefficients = np.linalg.solve(
         lhs,
         rhs,
     )
 
-    return (
-        float(beta[0]),
-        beta[1:].astype(float),
+    return coefficients.astype(
+        float
     )
 
 
-def _metrics(
+def _calculate_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
 ) -> tuple[float, float, float]:
     """
-    Return MAE, RMSE and R2.
+    Calculate MAE, RMSE and R².
     """
-
     residuals = (
         y_true
         - y_pred
@@ -373,8 +396,8 @@ def _metrics(
         )
     )
 
-    if ss_tot > 0:
-        r2 = (
+    if ss_tot > 0.0:
+        r2 = float(
             1.0
             - ss_res / ss_tot
         )
@@ -396,9 +419,18 @@ def fit_macro_model(
     learning_df: pd.DataFrame,
 ) -> MacroModel:
     """
-    Fit the V0 macro model from the complete historical transition dataset.
+    Fit the V0 macro model using the complete historical learning dataset.
 
-    The macro model uses cumulative elapsed time at each historical position.
+    Target:
+        elapsed_time_s
+
+    Inputs:
+        distance_from_start_m
+        cumulative_ascent_m
+        cumulative_descent_m
+
+    Constraint:
+        M(0,0,0) = 0
     """
 
     if learning_df is None or learning_df.empty:
@@ -427,6 +459,10 @@ def fit_macro_model(
 
     df = learning_df.copy()
 
+    # -------------------------------------------------------------------------
+    # Clean required columns
+    # -------------------------------------------------------------------------
+
     for column in required_columns:
         df[column] = pd.to_numeric(
             df[column],
@@ -445,13 +481,15 @@ def fit_macro_model(
         )
 
     # -------------------------------------------------------------------------
-    # Standardization
+    # Historical variables
     # -------------------------------------------------------------------------
 
-    standardized, means, scales = (
-        _build_standardized_base(
-            df
-        )
+    variables = _prepare_macro_variables(
+        df
+    )
+
+    scales = _calculate_scales(
+        variables
     )
 
     # -------------------------------------------------------------------------
@@ -460,7 +498,6 @@ def fit_macro_model(
 
     X = _build_design_matrix(
         df,
-        means,
         scales,
     )
 
@@ -471,23 +508,26 @@ def fit_macro_model(
     )
 
     # -------------------------------------------------------------------------
-    # Fit
+    # Fit constrained model
     # -------------------------------------------------------------------------
 
-    intercept, coefficients = _fit_ridge(
-        X,
-        y,
-        RIDGE_LAMBDA,
+    coefficients = _fit_ridge_without_intercept(
+        X=X,
+        y=y,
+        ridge_lambda=RIDGE_LAMBDA,
     )
+
+    # -------------------------------------------------------------------------
+    # Training predictions
+    # -------------------------------------------------------------------------
 
     y_pred = (
-        intercept
-        + X @ coefficients
+        X @ coefficients
     )
 
-    mae, rmse, r2 = _metrics(
-        y,
-        y_pred,
+    mae, rmse, r2 = _calculate_metrics(
+        y_true=y,
+        y_pred=y_pred,
     )
 
     residuals = (
@@ -515,13 +555,16 @@ def fit_macro_model(
         )
     )
 
-    n_activities = (
-        int(
+    # -------------------------------------------------------------------------
+    # Dataset metadata
+    # -------------------------------------------------------------------------
+
+    if "activity_id" in df.columns:
+        training_activities = int(
             df["activity_id"].nunique()
         )
-        if "activity_id" in df.columns
-        else 0
-    )
+    else:
+        training_activities = 0
 
     feature_names = [
         "distance",
@@ -537,37 +580,47 @@ def fit_macro_model(
 
     return MacroModel(
         feature_names=feature_names,
-        means=means,
         scales=scales,
         coefficients=coefficients,
-        intercept=intercept,
         residual_median_s=residual_median,
         residual_q10_s=residual_q10,
         residual_q90_s=residual_q90,
         training_rows=int(
             len(df)
         ),
-        training_activities=n_activities,
+        training_activities=training_activities,
         training_mae_s=mae,
         training_rmse_s=rmse,
         training_r2=r2,
         min_distance_m=float(
-            df["distance_from_start_m"].min()
+            df[
+                "distance_from_start_m"
+            ].min()
         ),
         max_distance_m=float(
-            df["distance_from_start_m"].max()
+            df[
+                "distance_from_start_m"
+            ].max()
         ),
         min_cumulative_ascent_m=float(
-            df["cumulative_ascent_m"].min()
+            df[
+                "cumulative_ascent_m"
+            ].min()
         ),
         max_cumulative_ascent_m=float(
-            df["cumulative_ascent_m"].max()
+            df[
+                "cumulative_ascent_m"
+            ].max()
         ),
         min_cumulative_descent_m=float(
-            df["cumulative_descent_m"].min()
+            df[
+                "cumulative_descent_m"
+            ].min()
         ),
         max_cumulative_descent_m=float(
-            df["cumulative_descent_m"].max()
+            df[
+                "cumulative_descent_m"
+            ].max()
         ),
     )
 
@@ -581,7 +634,6 @@ def predict_macro_cumulative_time(
     """
     Predict cumulative elapsed time.
     """
-
     if model is None:
         raise ValueError(
             "Macro model is None."
@@ -601,11 +653,15 @@ def predict_macro_profile(
     profile_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Add independent macro predictions to a normalized GPX profile.
+    Add independent macro predictions to a profile.
 
-    This function does NOT calculate micro predictions.
+    The input profile must contain cumulative ascent/descent and distance.
+
+    Macro prediction is cumulative time.
+
+    Segment macro time is then the difference between consecutive cumulative
+    predictions.
     """
-
     if model is None:
         raise ValueError(
             "Macro model is None."
@@ -628,26 +684,41 @@ def predict_macro_profile(
 
     if missing:
         raise ValueError(
-            "GPX profile is missing required macro columns: "
+            "Profile is missing required macro columns: "
             + ", ".join(missing)
         )
 
     result = profile_df.copy()
 
-    predicted_cumulative = (
+    cumulative_prediction = (
         model.predict_cumulative_time(
-            result["distance_from_start_m"],
-            result["cumulative_ascent_m"],
-            result["cumulative_descent_m"],
+            distance_from_start_m=result[
+                "distance_from_start_m"
+            ],
+            cumulative_ascent_m=result[
+                "cumulative_ascent_m"
+            ],
+            cumulative_descent_m=result[
+                "cumulative_descent_m"
+            ],
         )
     )
 
-    result["macro_predicted_cumulative_time_s"] = (
-        predicted_cumulative
-    )
+    result[
+        "macro_predicted_cumulative_time_s"
+    ] = cumulative_prediction
 
     # -------------------------------------------------------------------------
-    # Derive macro segment time from the cumulative macro curve.
+    # Macro segment duration.
+    #
+    # Each output row represents the END of a segment.
+    #
+    # Therefore:
+    #
+    #   segment k =
+    #   cumulative_time(k) - cumulative_time(k-1)
+    #
+    # For the first row, the model is anchored at zero.
     # -------------------------------------------------------------------------
 
     cumulative = result[
@@ -656,19 +727,14 @@ def predict_macro_profile(
         dtype=float
     )
 
-    segment_times = np.diff(
+    segment_time = np.diff(
         cumulative,
         prepend=0.0,
     )
 
-    # If the profile has an explicit starting row at 0 m, its prediction should
-    # represent zero elapsed time rather than the first positive segment.
-    if len(segment_times) > 0:
-        segment_times[0] = cumulative[0]
-
-    result["macro_predicted_time_s"] = (
-        segment_times
-    )
+    result[
+        "macro_predicted_time_s"
+    ] = segment_time
 
     return result
-  
+    
