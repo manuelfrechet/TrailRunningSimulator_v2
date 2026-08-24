@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import streamlit as st
 
+from config import (
+    TRANSITION_LENGTH_M,
+)
+
 from gpx_profile import (
     build_gpx_profile,
     load_raw_gpx_table,
@@ -33,6 +37,9 @@ if "raw_gpx_df" not in st.session_state:
 if "gpx_profile_df" not in st.session_state:
     st.session_state["gpx_profile_df"] = None
 
+if "gpx_file_signature" not in st.session_state:
+    st.session_state["gpx_file_signature"] = None
+
 
 # =============================================================================
 # GPX upload
@@ -46,7 +53,53 @@ uploaded_gpx_file = st.file_uploader(
 
 
 # =============================================================================
-# Build raw GPX table
+# Detect new GPX
+# =============================================================================
+
+if uploaded_gpx_file is not None:
+
+    current_signature = (
+        uploaded_gpx_file.name,
+        getattr(
+            uploaded_gpx_file,
+            "size",
+            None,
+        ),
+    )
+
+    if (
+        st.session_state[
+            "gpx_file_signature"
+        ]
+        != current_signature
+    ):
+        st.session_state[
+            "gpx_file_signature"
+        ] = current_signature
+
+        st.session_state[
+            "raw_gpx_df"
+        ] = None
+
+        st.session_state[
+            "gpx_profile_df"
+        ] = None
+
+
+# =============================================================================
+# Display current configuration
+# =============================================================================
+
+st.info(
+    f"Current learning step: "
+    f"{1.0:.0f} m | "
+    f"Current transition / prediction segment: "
+    f"{TRANSITION_LENGTH_M:.0f} m"
+)
+
+
+# =============================================================================
+# Load raw GPX table
 # =============================================================================
 
 if uploaded_gpx_file is not None:
@@ -58,24 +111,31 @@ if uploaded_gpx_file is not None:
 
         try:
 
-            raw_gpx_df = load_raw_gpx_table(
-                uploaded_gpx_file
-            )
+            with st.spinner(
+                "Reading raw GPX points..."
+            ):
+
+                raw_gpx_df = (
+                    load_raw_gpx_table(
+                        uploaded_gpx_file
+                    )
+                )
 
             if raw_gpx_df.empty:
+
                 st.error(
                     "No GPX track points were found."
                 )
+
             else:
 
                 st.session_state[
                     "raw_gpx_df"
                 ] = raw_gpx_df
 
-                # New GPX means the normalized profile is obsolete.
-                st.session_state[
-                    "gpx_profile_df"
-                ] = None
+                # The GPX has been successfully re-read,
+                # but the normalized profile can remain associated
+                # with the same GPX. We do not rebuild it here.
 
                 st.success(
                     "Raw GPX table loaded."
@@ -91,7 +151,7 @@ if uploaded_gpx_file is not None:
 
 
 # =============================================================================
-# Display raw GPX table
+# Raw GPX table
 # =============================================================================
 
 raw_gpx_df = st.session_state[
@@ -108,7 +168,13 @@ if (
     )
 
     st.write(
-        f"Raw GPX points: {len(raw_gpx_df):,}"
+        f"Raw GPX points: "
+        f"{len(raw_gpx_df):,}"
+    )
+
+    st.write(
+        "The table below is the raw GPX trajectory with "
+        "point-to-point distance and raw terrain calculations."
     )
 
     st.dataframe(
@@ -128,17 +194,17 @@ if (
 
 
 # =============================================================================
-# Normalize GPX
+# Normalized GPX profile
 # =============================================================================
 
 if uploaded_gpx_file is not None:
 
     st.subheader(
-        "50 m GPX normalization"
+        f"{TRANSITION_LENGTH_M:.0f} m GPX normalization"
     )
 
     if st.button(
-        "Build normalized 50 m GPX profile",
+        f"Build normalized {TRANSITION_LENGTH_M:.0f} m GPX profile",
         type="primary",
         key="build_gpx_profile",
     ):
@@ -146,7 +212,8 @@ if uploaded_gpx_file is not None:
         try:
 
             with st.spinner(
-                "Building normalized 50 m GPX profile..."
+                f"Building normalized "
+                f"{TRANSITION_LENGTH_M:.0f} m GPX profile..."
             ):
 
                 gpx_profile_df = (
@@ -161,7 +228,8 @@ if uploaded_gpx_file is not None:
             ] = gpx_profile_df
 
             st.success(
-                "Normalized 50 m GPX profile created."
+                f"Normalized "
+                f"{TRANSITION_LENGTH_M:.0f} m GPX profile created."
             )
 
         except Exception as exc:
@@ -186,12 +254,14 @@ if (
     and not gpx_profile_df.empty
 ):
 
-    profile_summary = summarize_gpx_profile(
-        gpx_profile_df
+    profile_summary = (
+        summarize_gpx_profile(
+            gpx_profile_df
+        )
     )
 
     st.subheader(
-        "Normalized 50 m GPX profile"
+        "Normalized GPX profile"
     )
 
     col1, col2, col3, col4 = st.columns(4)
@@ -199,7 +269,7 @@ if (
     with col1:
 
         st.metric(
-            "50 m segments",
+            f"{TRANSITION_LENGTH_M:.0f} m segments",
             f"{profile_summary['n_segments']:,}",
         )
 
@@ -225,8 +295,7 @@ if (
         )
 
     st.write(
-        "The normalized distance should progress "
-        "50, 100, 150, ... metres."
+        "Normalized distances:"
     )
 
     st.dataframe(
