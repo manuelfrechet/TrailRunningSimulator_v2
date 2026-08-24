@@ -11,7 +11,7 @@ import pandas as pd
 # Configuration
 # =============================================================================
 
-SEGMENT_LENGTH_M = 50.0
+SEGMENT_LENGTH_M = 1000.0
 
 # Only used to detect whether a raw point is effectively located at a
 # normalized boundary.
