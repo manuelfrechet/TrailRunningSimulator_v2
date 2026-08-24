@@ -1,21 +1,40 @@
 """
+Trail Running Simulator V2
 Project-wide configuration.
 
-There should be one authoritative definition for each project-level
-quantity. Modules must import these values rather than hard-code them.
+This is the single authoritative location for project-level spatial
+definitions.
+
+Other modules must import these values rather than hard-code them.
 """
 
-# Historical learning:
-# Starting positions are sampled every 1 m.
+
+# =============================================================================
+# Historical learning resolution
+# =============================================================================
+
+# Historical FIT trajectories are converted into rolling transition rows
+# starting every 1 metre.
+# Example:
+#   state at 0 m   -> next transition
+#   state at 1 m   -> next transition
+#   state at 2 m   -> next transition
+# This is independent from the prediction segment length.
+
 LEARNING_STEP_M = 1.0
 
-# Historical transition / GPX prediction segment length.
+
+# =============================================================================
+# Transition / prediction segment length
+# =============================================================================
+
+# The historical transition attached to each learning position covers this
+# length, and the GPX prediction advances by this same length.
 #
 # Normal V0:
-#     50 m
-#
-# For the temporary GPX granularity experiment:
-#     change this single value to 1000.0
-#
-# Then restore it to 50.0 afterwards.
+#   50 m
+# Temporary experiment:
+#   change ONLY this value to 1000.0
+# After the experiment, restore it to 50.0.
+
 TRANSITION_LENGTH_M = 50.0
