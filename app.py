@@ -8,11 +8,16 @@ from fit_learning import (
     summarize_learning_dataset,
 )
 
-from micro_model import fit_micro_model
+from macro_model import fit_macro_model
+
+from diagnostics import (
+    build_all_diagnostics,
+    build_leave_one_activity_out_validation,
+)
 
 
 # -----------------------------------------------------------------------------
-# Page
+# Page configuration
 # -----------------------------------------------------------------------------
 
 st.set_page_config(
@@ -22,26 +27,54 @@ st.set_page_config(
 
 st.title("Trail Running Simulator V2")
 
-st.header("V0 — Micro analog model test")
-
 
 # -----------------------------------------------------------------------------
 # Session state
 # -----------------------------------------------------------------------------
 
-if "learning_df" not in st.session_state:
-    st.session_state["learning_df"] = None
+DEFAULT_STATE = {
+    "learning_df": None,
+    "learning_summary": None,
+    "macro_model": None,
+    "diagnostics": None,
+    "fit_signature": None,
+    "loo_summary": None,
+    "loo_detail": None,
+}
 
-if "micro_model" not in st.session_state:
-    st.session_state["micro_model"] = None
-
-if "micro_test_df" not in st.session_state:
-    st.session_state["micro_test_df"] = None
+for key, default_value in DEFAULT_STATE.items():
+    if key not in st.session_state:
+        st.session_state[key] = default_value
 
 
 # -----------------------------------------------------------------------------
-# FIT input
+# Helpers
 # -----------------------------------------------------------------------------
+
+def _fit_signature(uploaded_files) -> tuple[tuple[str, int | None], ...]:
+    """
+    Create a lightweight signature for the currently uploaded FIT set.
+
+    This is used only to invalidate cached session results when the user
+    changes the selected FIT files.
+    """
+    if not uploaded_files:
+        return tuple()
+
+    return tuple(
+        (
+            getattr(file, "name", ""),
+            getattr(file, "size", None),
+        )
+        for file in uploaded_files
+    )
+
+
+# -----------------------------------------------------------------------------
+# Historical FIT input
+# -----------------------------------------------------------------------------
+
+st.header("1. Historical FIT learning")
 
 uploaded_fit_files = st.file_uploader(
     "Upload one or more historical FIT files",
@@ -49,25 +82,47 @@ uploaded_fit_files = st.file_uploader(
     accept_multiple_files=True,
 )
 
+current_signature = _fit_signature(
+    uploaded_fit_files
+)
+
 
 # -----------------------------------------------------------------------------
-# Build models
+# Detect changed FIT selection
+# -----------------------------------------------------------------------------
+
+if (
+    current_signature
+    and current_signature
+    != st.session_state["fit_signature"]
+):
+    st.session_state["learning_df"] = None
+    st.session_state["learning_summary"] = None
+    st.session_state["macro_model"] = None
+    st.session_state["diagnostics"] = None
+    st.session_state["loo_summary"] = None
+    st.session_state["loo_detail"] = None
+
+
+# -----------------------------------------------------------------------------
+# Main combined learning
 # -----------------------------------------------------------------------------
 
 if uploaded_fit_files:
 
     if st.button(
-        "Build historical data + test micro model",
+        "Build historical learning + macro model",
         type="primary",
     ):
 
         try:
+
             # -----------------------------------------------------------------
-            # Historical dataset
+            # 1. Historical learning
             # -----------------------------------------------------------------
 
             with st.spinner(
-                "Building historical learning dataset..."
+                "Building historical 1 m rolling / 50 m transition dataset..."
             ):
                 learning_df = build_learning_dataset(
                     uploaded_fit_files
@@ -79,239 +134,473 @@ if uploaded_fit_files:
                 )
                 st.stop()
 
-            st.session_state["learning_df"] = learning_df
-
-            summary = summarize_learning_dataset(
-                learning_df
-            )
-
-            st.success(
-                "Historical learning dataset created."
-            )
-
-            st.write(
-                f"Activities: {summary['n_activities']}"
-            )
-
-            st.write(
-                f"Historical transitions: "
-                f"{summary['n_transitions']:,}"
+            learning_summary = (
+                summarize_learning_dataset(
+                    learning_df
+                )
             )
 
             # -----------------------------------------------------------------
-            # Micro model
+            # 2. Macro model
             # -----------------------------------------------------------------
 
             with st.spinner(
-                "Building historical micro analog library..."
+                "Fitting V0 macro model..."
             ):
-                micro_model = fit_micro_model(
+                macro_model = fit_macro_model(
                     learning_df
                 )
 
-            st.session_state["micro_model"] = micro_model
+            # -----------------------------------------------------------------
+            # 3. Diagnostics
+            #
+            # Temporary research/calibration layer.
+            # The production path will eventually remove this.
+            # -----------------------------------------------------------------
 
-            micro_summary = micro_model.summary()
+            with st.spinner(
+                "Building diagnostics..."
+            ):
+                diagnostics = build_all_diagnostics(
+                    learning_df=learning_df,
+                    uploaded_fit_files=uploaded_fit_files,
+                    macro_model=macro_model,
+                )
+
+            # -----------------------------------------------------------------
+            # Persist everything
+            # -----------------------------------------------------------------
+
+            st.session_state["learning_df"] = learning_df
+            st.session_state["learning_summary"] = learning_summary
+            st.session_state["macro_model"] = macro_model
+            st.session_state["diagnostics"] = diagnostics
+            st.session_state["fit_signature"] = current_signature
+
+            # New learning run invalidates old leave-one-out results.
+            st.session_state["loo_summary"] = None
+            st.session_state["loo_detail"] = None
 
             st.success(
-                "Micro analog model created."
+                "Historical learning and macro model completed successfully."
             )
-
-            st.write(
-                f"Historical states: "
-                f"{micro_summary['training_rows']:,}"
-            )
-
-            st.write(
-                f"Activities: "
-                f"{micro_summary['training_activities']}"
-            )
-
-            st.write(
-                f"State variables: "
-                f"{micro_summary['n_state_variables']}"
-            )
-
-            # -----------------------------------------------------------------
-            # Validation sample
-            # -----------------------------------------------------------------
-            #
-            # Important:
-            # We deliberately start with a SIMPLE sanity check.
-            #
-            # We query historical rows using the same historical library.
-            # This is NOT an out-of-sample performance evaluation.
-            #
-            # It is only intended to verify that:
-            #
-            #   1. state vectors are constructed correctly;
-            #   2. nearest neighbours make sense;
-            #   3. interpolation works;
-            #   4. the KD-tree is functioning.
-            #
-            # We exclude each queried row itself from consideration by asking
-            # for three neighbours and ignoring the exact self-match.
-            # -----------------------------------------------------------------
-
-            test_df = learning_df.sample(
-                n=min(
-                    100,
-                    len(learning_df),
-                ),
-                random_state=42,
-            ).copy()
-
-            rows = []
-
-            for _, row in test_df.iterrows():
-
-                query = micro_model.build_query(
-                    distance_from_start_m=float(
-                        row["distance_from_start_m"]
-                    ),
-                    cumulative_ascent_m=float(
-                        row["cumulative_ascent_m"]
-                    ),
-                    cumulative_descent_m=float(
-                        row["cumulative_descent_m"]
-                    ),
-                    elapsed_time_s=float(
-                        row["elapsed_time_s"]
-                    ),
-                    segment_ascent_m=float(
-                        row["segment_ascent_m"]
-                    ),
-                    segment_descent_m=float(
-                        row["segment_descent_m"]
-                    ),
-                    segment_grade_pct=float(
-                        row["segment_grade_pct"]
-                    ),
-                )
-
-                prediction_df = micro_model.predict(
-                    query
-                )
-
-                prediction = prediction_df.iloc[0]
-
-                rows.append(
-                    {
-                        "activity_id": row["activity_id"],
-                        "activity_name": row["activity_name"],
-                        "distance_from_start_m": row[
-                            "distance_from_start_m"
-                        ],
-                        "actual_segment_time_s": row[
-                            "actual_segment_time_s"
-                        ],
-                        "micro_predicted_time_s": prediction[
-                            "micro_predicted_time_s"
-                        ],
-                        "prediction_error_s": (
-                            prediction[
-                                "micro_predicted_time_s"
-                            ]
-                            - row[
-                                "actual_segment_time_s"
-                            ]
-                        ),
-                        "analogue_1_distance": prediction[
-                            "analogue_1_distance"
-                        ],
-                        "analogue_1_time_s": prediction[
-                            "analogue_1_time_s"
-                        ],
-                        "analogue_1_activity_id": prediction[
-                            "analogue_1_activity_id"
-                        ],
-                        "analogue_1_activity_name": prediction[
-                            "analogue_1_activity_name"
-                        ],
-                        "analogue_1_distance_from_start_m": prediction[
-                            "analogue_1_distance_from_start_m"
-                        ],
-                        "analogue_2_distance": prediction[
-                            "analogue_2_distance"
-                        ],
-                        "analogue_2_time_s": prediction[
-                            "analogue_2_time_s"
-                        ],
-                        "analogue_2_activity_id": prediction[
-                            "analogue_2_activity_id"
-                        ],
-                        "analogue_2_activity_name": prediction[
-                            "analogue_2_activity_name"
-                        ],
-                        "analogue_2_distance_from_start_m": prediction[
-                            "analogue_2_distance_from_start_m"
-                        ],
-                    }
-                )
-
-            micro_test_df = pd.DataFrame(
-                rows
-            )
-
-            st.session_state[
-                "micro_test_df"
-            ] = micro_test_df
 
         except Exception as exc:
+
             st.error(
-                f"Micro model test failed: {exc}"
+                f"Learning failed: {exc}"
             )
+
             st.exception(exc)
 
 
 # -----------------------------------------------------------------------------
-# Display persisted micro test
+# Persisted combined-learning results
 # -----------------------------------------------------------------------------
 
-micro_test_df = st.session_state.get(
-    "micro_test_df"
-)
-
-micro_model = st.session_state.get(
-    "micro_model"
-)
+learning_df = st.session_state["learning_df"]
+learning_summary = st.session_state["learning_summary"]
+macro_model = st.session_state["macro_model"]
+diagnostics = st.session_state["diagnostics"]
 
 
-if micro_test_df is not None and not micro_test_df.empty:
+if (
+    learning_df is not None
+    and learning_summary is not None
+):
 
-    st.subheader(
-        "Micro analog validation sample"
+    st.subheader("Historical learning dataset")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            "Activities",
+            learning_summary["n_activities"],
+        )
+
+    with col2:
+        st.metric(
+            "Historical 50 m transitions",
+            f"{learning_summary['n_transitions']:,}",
+        )
+
+    with col3:
+        st.metric(
+            "Median 50 m time",
+            f"{learning_summary['median_segment_time_s']:.2f} s",
+        )
+
+    col4, col5, col6 = st.columns(3)
+
+    with col4:
+        st.metric(
+            "Mean 50 m time",
+            f"{learning_summary['mean_segment_time_s']:.2f} s",
+        )
+
+    with col5:
+        st.metric(
+            "Fastest 50 m",
+            f"{learning_summary['min_segment_time_s']:.2f} s",
+        )
+
+    with col6:
+        st.metric(
+            "Slowest 50 m",
+            f"{learning_summary['max_segment_time_s']:.2f} s",
+        )
+
+    with st.expander(
+        "Historical transition data",
+        expanded=False,
+    ):
+        st.dataframe(
+            learning_df.head(100),
+            width="stretch",
+        )
+
+    st.download_button(
+        label="Download complete historical learning dataset",
+        data=learning_df.to_csv(index=False),
+        file_name="historical_learning_dataset_v0.csv",
+        mime="text/csv",
+        key="download_learning_dataset",
     )
 
-    metric1, metric2, metric3 = st.columns(3)
 
-    with metric1:
+# -----------------------------------------------------------------------------
+# Macro results
+# -----------------------------------------------------------------------------
+
+if macro_model is not None:
+
+    macro_summary = macro_model.summary()
+
+    st.subheader("Macro model")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
         st.metric(
-            "Sample size",
-            f"{len(micro_test_df):,}",
+            "Training MAE",
+            f"{macro_summary['training_mae_s']:.2f} s",
         )
 
-    with metric2:
+    with col2:
         st.metric(
-            "Mean absolute error",
-            f"{micro_test_df['prediction_error_s'].abs().mean():.2f} s",
+            "Training RMSE",
+            f"{macro_summary['training_rmse_s']:.2f} s",
         )
 
-    with metric3:
+    with col3:
         st.metric(
-            "Median absolute error",
-            f"{micro_test_df['prediction_error_s'].abs().median():.2f} s",
+            "Training R²",
+            f"{macro_summary['training_r2']:.4f}",
         )
+
+    st.write(
+        f"Historical rows used: "
+        f"{macro_summary['training_rows']:,}"
+    )
+
+    st.write(
+        f"Activities used: "
+        f"{macro_summary['training_activities']}"
+    )
+
+
+# -----------------------------------------------------------------------------
+# Diagnostics
+# -----------------------------------------------------------------------------
+
+if diagnostics is not None:
+
+    st.divider()
+
+    st.header("Diagnostics")
+
+    # -------------------------------------------------------------------------
+    # Per-activity learning
+    # -------------------------------------------------------------------------
+
+    activity_learning = diagnostics[
+        "activity_learning_summary"
+    ]
+
+    with st.expander(
+        "Per-activity learning summary",
+        expanded=True,
+    ):
+
+        st.dataframe(
+            activity_learning,
+            width="stretch",
+        )
+
+        st.download_button(
+            label="Download per-activity learning summary",
+            data=activity_learning.to_csv(index=False),
+            file_name="activity_learning_summary_v0.csv",
+            mime="text/csv",
+            key="download_activity_learning",
+        )
+
+    # -------------------------------------------------------------------------
+    # Per-activity macro
+    # -------------------------------------------------------------------------
+
+    activity_macro = diagnostics[
+        "activity_macro_summary"
+    ]
+
+    with st.expander(
+        "Per-activity macro summary",
+        expanded=True,
+    ):
+
+        st.dataframe(
+            activity_macro,
+            width="stretch",
+        )
+
+        st.download_button(
+            label="Download per-activity macro summary",
+            data=activity_macro.to_csv(index=False),
+            file_name="activity_macro_summary_v0.csv",
+            mime="text/csv",
+            key="download_activity_macro",
+        )
+
+    # -------------------------------------------------------------------------
+    # Stationary-time analysis
+    # -------------------------------------------------------------------------
+
+    stop_summary = diagnostics[
+        "stop_summary"
+    ]
+
+    with st.expander(
+        "Stationary-time analysis",
+        expanded=True,
+    ):
+
+        st.dataframe(
+            stop_summary,
+            width="stretch",
+        )
+
+        st.download_button(
+            label="Download stationary-time summary",
+            data=stop_summary.to_csv(index=False),
+            file_name="stationary_time_summary_v0.csv",
+            mime="text/csv",
+            key="download_stop_summary",
+        )
+
+    # -------------------------------------------------------------------------
+    # Stationary time versus macro error
+    # -------------------------------------------------------------------------
+
+    stop_macro_comparison = diagnostics[
+        "stop_macro_comparison"
+    ]
+
+    with st.expander(
+        "Stationary time vs macro error",
+        expanded=True,
+    ):
+
+        st.dataframe(
+            stop_macro_comparison,
+            width="stretch",
+        )
+
+        st.download_button(
+            label="Download stationary vs macro comparison",
+            data=stop_macro_comparison.to_csv(index=False),
+            file_name="stationary_vs_macro_v0.csv",
+            mime="text/csv",
+            key="download_stop_macro",
+        )
+
+    # -------------------------------------------------------------------------
+    # Extreme transitions
+    # -------------------------------------------------------------------------
+
+    extreme_transitions = diagnostics[
+        "extreme_transitions"
+    ]
+
+    with st.expander(
+        "Fastest and slowest transitions",
+        expanded=False,
+    ):
+
+        st.dataframe(
+            extreme_transitions,
+            width="stretch",
+        )
+
+        st.download_button(
+            label="Download fastest / slowest transitions",
+            data=extreme_transitions.to_csv(index=False),
+            file_name="extreme_transitions_v0.csv",
+            mime="text/csv",
+            key="download_extremes",
+        )
+
+    # -------------------------------------------------------------------------
+    # Compact learning sample
+    # -------------------------------------------------------------------------
+
+    diagnostic_sample = diagnostics[
+        "learning_diagnostic_sample"
+    ]
+
+    with st.expander(
+        "Compact learning diagnostic sample",
+        expanded=False,
+    ):
+
+        st.dataframe(
+            diagnostic_sample,
+            width="stretch",
+        )
+
+        st.download_button(
+            label="Download compact learning diagnostics",
+            data=diagnostic_sample.to_csv(index=False),
+            file_name="historical_learning_diagnostics_v0.csv",
+            mime="text/csv",
+            key="download_learning_diagnostics",
+        )
+
+
+# -----------------------------------------------------------------------------
+# Temporary leave-one-activity-out validation
+# -----------------------------------------------------------------------------
+#
+# This section is intentionally isolated from the operational learning path.
+#
+# It is a research/calibration tool only.
+# It will be removed or moved entirely into diagnostics before production.
+# -----------------------------------------------------------------------------
+
+if (
+    learning_df is not None
+    and len(
+        learning_df[
+            "activity_id"
+        ].unique()
+    ) >= 2
+):
+
+    st.divider()
+
+    st.header(
+        "Temporary research validation"
+    )
+
+    st.write(
+        "Leave-one-FIT-out validation: each FIT is predicted using a "
+        "micro library built from all the other FITs."
+    )
+
+    if st.button(
+        "Run leave-one-FIT-out validation",
+        type="secondary",
+    ):
+
+        try:
+
+            with st.spinner(
+                "Running leave-one-FIT-out validation..."
+            ):
+
+                loo_summary, loo_detail = (
+                    build_leave_one_activity_out_validation(
+                        learning_df=learning_df,
+                        max_test_rows_per_activity=None,
+                    )
+                )
+
+            st.session_state[
+                "loo_summary"
+            ] = loo_summary
+
+            st.session_state[
+                "loo_detail"
+            ] = loo_detail
+
+            st.success(
+                "Leave-one-FIT-out validation completed."
+            )
+
+        except Exception as exc:
+
+            st.error(
+                f"Leave-one-FIT-out validation failed: {exc}"
+            )
+
+            st.exception(exc)
+
+
+# -----------------------------------------------------------------------------
+# Persisted leave-one-out results
+# -----------------------------------------------------------------------------
+
+loo_summary = st.session_state[
+    "loo_summary"
+]
+
+loo_detail = st.session_state[
+    "loo_detail"
+]
+
+
+if (
+    loo_summary is not None
+    and not loo_summary.empty
+):
+
+    st.subheader(
+        "Leave-one-FIT-out results"
+    )
 
     st.dataframe(
-        micro_test_df,
+        loo_summary,
         width="stretch",
     )
 
     st.download_button(
-        "Download micro validation sample",
-        data=micro_test_df.to_csv(index=False),
-        file_name="micro_validation_sample_v0.csv",
+        label="Download leave-one-FIT-out summary",
+        data=loo_summary.to_csv(index=False),
+        file_name="leave_one_fit_out_summary_v0.csv",
         mime="text/csv",
+        key="download_loo_summary",
     )
-    
+
+    if (
+        loo_detail is not None
+        and not loo_detail.empty
+    ):
+
+        with st.expander(
+            "Leave-one-FIT-out segment-level results",
+            expanded=False,
+        ):
+
+            st.dataframe(
+                loo_detail.head(500),
+                width="stretch",
+            )
+
+            st.download_button(
+                label="Download leave-one-FIT-out details",
+                data=loo_detail.to_csv(index=False),
+                file_name="leave_one_fit_out_details_v0.csv",
+                mime="text/csv",
+                key="download_loo_details",
+            )
+            
