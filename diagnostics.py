@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import fitdecode
 import numpy as np
 import pandas as pd
-import fitdecode
 
 
 # -----------------------------------------------------------------------------
@@ -15,13 +15,11 @@ RANDOM_SAMPLE_SIZE = 100
 EXTREME_SAMPLE_SIZE = 20
 RANDOM_STATE = 42
 
-# Numerical tolerance only.
-# This is NOT a physiological "stop" threshold.
 DISTANCE_TOLERANCE_M = 0.01
 
 
 # =============================================================================
-# Learning-dataset diagnostics
+# Basic learning-dataset diagnostics
 # =============================================================================
 
 def build_learning_diagnostic_sample(
@@ -29,15 +27,6 @@ def build_learning_diagnostic_sample(
     random_sample_size: int = RANDOM_SAMPLE_SIZE,
     extreme_sample_size: int = 100,
 ) -> pd.DataFrame:
-    """
-    Build a compact diagnostic extract from the complete historical dataset.
-
-    Contains:
-        - first rows
-        - deterministic random sample
-        - slowest transitions
-        - fastest transitions
-    """
     if learning_df is None or learning_df.empty:
         return pd.DataFrame()
 
@@ -98,9 +87,6 @@ def build_learning_diagnostic_sample(
 def build_activity_learning_summary(
     learning_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Summarize historical 50 m transitions separately by FIT activity.
-    """
     if learning_df is None or learning_df.empty:
         return pd.DataFrame()
 
@@ -128,6 +114,7 @@ def build_activity_learning_summary(
         df["actual_segment_time_s"],
         errors="coerce",
     )
+
     df["distance_from_start_m"] = pd.to_numeric(
         df["distance_from_start_m"],
         errors="coerce",
@@ -185,11 +172,6 @@ def build_extreme_transition_summary(
     learning_df: pd.DataFrame,
     n_each: int = EXTREME_SAMPLE_SIZE,
 ) -> pd.DataFrame:
-    """
-    Return the fastest and slowest historical transitions.
-
-    No observations are removed from the actual learning dataset.
-    """
     if learning_df is None or learning_df.empty:
         return pd.DataFrame()
 
@@ -269,15 +251,12 @@ def build_extreme_transition_summary(
 
 
 # =============================================================================
-# Raw FIT stop diagnostics
+# Raw FIT stationary-time diagnostics
 # =============================================================================
 
 def _extract_raw_time_distance(
     uploaded_file,
 ) -> pd.DataFrame:
-    """
-    Read only timestamp and distance from the original FIT records.
-    """
     uploaded_file.seek(0)
 
     rows: list[dict[str, Any]] = []
@@ -343,8 +322,7 @@ def _extract_raw_time_distance(
     if df.empty:
         return pd.DataFrame()
 
-    # Chronological order matters for stop detection.
-    df = (
+    return (
         df.sort_values(
             "timestamp",
             kind="mergesort",
@@ -356,15 +334,10 @@ def _extract_raw_time_distance(
         .reset_index(drop=True)
     )
 
-    return df
-
 
 def _build_stationary_intervals(
     raw_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Identify intervals where time advances but recorded distance does not.
-    """
     if raw_df is None or raw_df.empty:
         return pd.DataFrame()
 
@@ -429,11 +402,7 @@ def analyze_fit_stops(
     activity_id: int,
     activity_name: str,
 ) -> tuple[dict[str, Any], pd.DataFrame]:
-    """
-    Analyze stationary time for one FIT.
 
-    Diagnostic only. Does not alter the learning dataset.
-    """
     raw_df = _extract_raw_time_distance(
         uploaded_file
     )
@@ -470,16 +439,17 @@ def analyze_fit_stops(
         - raw_df["distance_m"].iloc[0]
     )
 
-    if intervals.empty:
-        stationary_time_s = 0.0
-        stationary_intervals = 0
-    else:
-        stationary_time_s = float(
-            intervals["stationary_time_s"].sum()
-        )
-        stationary_intervals = int(
-            intervals["is_stationary"].sum()
-        )
+    stationary_time_s = (
+        float(intervals["stationary_time_s"].sum())
+        if not intervals.empty
+        else 0.0
+    )
+
+    stationary_intervals = (
+        int(intervals["is_stationary"].sum())
+        if not intervals.empty
+        else 0
+    )
 
     stationary_fraction = (
         stationary_time_s / elapsed_time_s
@@ -521,13 +491,7 @@ def analyze_fit_stops(
 def analyze_uploaded_fit_stops(
     uploaded_files,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Analyze all uploaded FIT files for stationary time.
 
-    Returns:
-        per-activity summary
-        raw interval diagnostics
-    """
     if not uploaded_files:
         return (
             pd.DataFrame(),
@@ -582,10 +546,7 @@ def build_activity_macro_summary(
     learning_df: pd.DataFrame,
     macro_model,
 ) -> pd.DataFrame:
-    """
-    Compare historical cumulative time to macro prediction separately
-    for each FIT activity.
-    """
+
     if learning_df is None or learning_df.empty:
         return pd.DataFrame()
 
@@ -620,6 +581,7 @@ def build_activity_macro_summary(
         ["activity_id", "activity_name"],
         sort=True,
     ):
+
         group = (
             group.copy()
             .sort_values(
@@ -652,9 +614,9 @@ def build_activity_macro_summary(
             ],
         )
 
-        actual = group["elapsed_time_s"].to_numpy(
-            dtype=float
-        )
+        actual = group[
+            "elapsed_time_s"
+        ].to_numpy(dtype=float)
 
         error = predicted - actual
         abs_error = np.abs(error)
@@ -722,9 +684,7 @@ def build_macro_historical_check(
     learning_df: pd.DataFrame,
     macro_model,
 ) -> pd.DataFrame:
-    """
-    Build the full historical macro prediction/error table.
-    """
+
     if learning_df is None or learning_df.empty:
         return pd.DataFrame()
 
@@ -748,7 +708,9 @@ def build_macro_historical_check(
             + ", ".join(missing)
         )
 
-    base = learning_df[required].copy()
+    base = learning_df[
+        required
+    ].copy()
 
     predicted = macro_model.predict_cumulative_time(
         base["distance_from_start_m"],
@@ -756,11 +718,15 @@ def build_macro_historical_check(
         base["cumulative_descent_m"],
     )
 
-    base["macro_predicted_cumulative_time_s"] = predicted
+    base[
+        "macro_predicted_cumulative_time_s"
+    ] = predicted
+
     base["macro_error_s"] = (
         base["macro_predicted_cumulative_time_s"]
         - base["elapsed_time_s"]
     )
+
     base["macro_error_abs_s"] = (
         base["macro_error_s"].abs()
     )
@@ -772,11 +738,7 @@ def compare_stops_with_macro(
     stop_summary_df: pd.DataFrame,
     activity_macro_summary_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Compare stationary-time diagnostics against macro-model finish errors.
 
-    Diagnostic only.
-    """
     if (
         stop_summary_df is None
         or stop_summary_df.empty
@@ -797,14 +759,18 @@ def compare_stops_with_macro(
     if comparison.empty:
         return pd.DataFrame()
 
-    # end_error_s = macro - actual
-    # Therefore positive underprediction = actual - macro = -error.
-    comparison["macro_underprediction_s"] = (
+    comparison[
+        "macro_underprediction_s"
+    ] = (
         -comparison["end_error_s"]
     )
 
-    comparison["macro_underprediction_min"] = (
-        comparison["macro_underprediction_s"] / 60.0
+    comparison[
+        "macro_underprediction_min"
+    ] = (
+        comparison[
+            "macro_underprediction_s"
+        ] / 60.0
     )
 
     comparison[
@@ -826,7 +792,643 @@ def compare_stops_with_macro(
 
 
 # =============================================================================
-# One convenience function for the app
+# Leave-one-activity-out validation
+# =============================================================================
+
+def _prepare_micro_training_subset(
+    learning_df: pd.DataFrame,
+    held_out_activity_id: Any,
+) -> pd.DataFrame:
+    """
+    Return all historical rows except the held-out activity.
+    """
+    return learning_df[
+        learning_df["activity_id"]
+        != held_out_activity_id
+    ].copy()
+
+
+def _predict_held_out_activity_micro(
+    training_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Fit a temporary micro model on training_df and predict test_df.
+
+    This function is diagnostic only.
+    """
+    # Imported locally so diagnostics remains the only optional module
+    # depending on the micro model.
+    from micro_model import fit_micro_model
+
+    model = fit_micro_model(
+        training_df
+    )
+
+    query_df = test_df[
+        [
+            "distance_from_start_m",
+            "cumulative_ascent_m",
+            "cumulative_descent_m",
+            "elapsed_time_s",
+            "segment_ascent_m",
+            "segment_descent_m",
+            "segment_grade_pct",
+        ]
+    ].copy()
+
+    prediction_df = model.predict(
+        query_df
+    )
+
+    result = test_df[
+        [
+            "activity_id",
+            "activity_name",
+            "distance_from_start_m",
+            "actual_segment_time_s",
+        ]
+    ].reset_index(
+        drop=True
+    ).copy()
+
+    result[
+        "micro_predicted_time_s"
+    ] = prediction_df[
+        "micro_predicted_time_s"
+    ].to_numpy()
+
+    result[
+        "micro_error_s"
+    ] = (
+        result[
+            "micro_predicted_time_s"
+        ]
+        - result[
+            "actual_segment_time_s"
+        ]
+    )
+
+    result[
+        "micro_abs_error_s"
+    ] = result[
+        "micro_error_s"
+    ].abs()
+
+    result[
+        "analogue_1_distance"
+    ] = prediction_df[
+        "analogue_1_distance"
+    ].to_numpy()
+
+    result[
+        "analogue_1_time_s"
+    ] = prediction_df[
+        "analogue_1_time_s"
+    ].to_numpy()
+
+    result[
+        "analogue_1_activity_id"
+    ] = prediction_df[
+        "analogue_1_activity_id"
+    ].to_numpy()
+
+    result[
+        "analogue_2_distance"
+    ] = prediction_df[
+        "analogue_2_distance"
+    ].to_numpy()
+
+    result[
+        "analogue_2_time_s"
+    ] = prediction_df[
+        "analogue_2_time_s"
+    ].to_numpy()
+
+    result[
+        "analogue_2_activity_id"
+    ] = prediction_df[
+        "analogue_2_activity_id"
+    ].to_numpy()
+
+    return result
+
+
+def _predict_held_out_activity_macro(
+    training_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Fit a temporary macro model on all activities except the held-out one.
+    """
+    from macro_model import fit_macro_model
+
+    model = fit_macro_model(
+        training_df
+    )
+
+    result = test_df[
+        [
+            "activity_id",
+            "activity_name",
+            "distance_from_start_m",
+            "cumulative_ascent_m",
+            "cumulative_descent_m",
+            "elapsed_time_s",
+        ]
+    ].reset_index(
+        drop=True
+    ).copy()
+
+    result[
+        "macro_predicted_cumulative_time_s"
+    ] = model.predict_cumulative_time(
+        result["distance_from_start_m"],
+        result["cumulative_ascent_m"],
+        result["cumulative_descent_m"],
+    )
+
+    # The test rows are 1 m apart.
+    cumulative = result[
+        "macro_predicted_cumulative_time_s"
+    ].to_numpy(
+        dtype=float
+    )
+
+    result[
+        "macro_predicted_time_s"
+    ] = np.diff(
+        cumulative,
+        prepend=0.0,
+    )
+
+    # The very first historical 1 m row corresponds to the origin.
+    # Its actual elapsed time is zero.
+    if len(result) > 0:
+        result.loc[
+            0,
+            "macro_predicted_time_s"
+        ] = cumulative[0]
+
+    return result
+
+
+def build_leave_one_activity_out_validation(
+    learning_df: pd.DataFrame,
+    max_test_rows_per_activity: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Perform leave-one-activity-out validation.
+
+    For every activity:
+
+        TRAIN:
+            all other activities
+
+        TEST:
+            only the held-out activity
+
+    This is purely diagnostic.
+
+    Returns:
+        1. per-activity summary
+        2. detailed segment-level predictions
+    """
+    if learning_df is None or learning_df.empty:
+        return (
+            pd.DataFrame(),
+            pd.DataFrame(),
+        )
+
+    required = [
+        "activity_id",
+        "activity_name",
+        "distance_from_start_m",
+        "cumulative_ascent_m",
+        "cumulative_descent_m",
+        "elapsed_time_s",
+        "segment_ascent_m",
+        "segment_descent_m",
+        "segment_grade_pct",
+        "actual_segment_time_s",
+    ]
+
+    missing = [
+        col for col in required
+        if col not in learning_df.columns
+    ]
+
+    if missing:
+        raise ValueError(
+            "Leave-one-activity-out validation missing columns: "
+            + ", ".join(missing)
+        )
+
+    activities = (
+        learning_df[
+            [
+                "activity_id",
+                "activity_name",
+            ]
+        ]
+        .drop_duplicates()
+        .sort_values(
+            "activity_id"
+        )
+        .reset_index(drop=True)
+    )
+
+    summary_rows: list[dict[str, Any]] = []
+    detail_frames: list[pd.DataFrame] = []
+
+    for _, activity in activities.iterrows():
+
+        held_out_id = activity[
+            "activity_id"
+        ]
+
+        held_out_name = activity[
+            "activity_name"
+        ]
+
+        training_df = (
+            _prepare_micro_training_subset(
+                learning_df,
+                held_out_id,
+            )
+        )
+
+        test_df = learning_df[
+            learning_df["activity_id"]
+            == held_out_id
+        ].copy()
+
+        if test_df.empty:
+            continue
+
+        # -------------------------------------------------------------
+        # Optional diagnostic speed control.
+        #
+        # By default we use the entire held-out activity.
+        # -------------------------------------------------------------
+
+        if (
+            max_test_rows_per_activity is not None
+            and len(test_df)
+            > max_test_rows_per_activity
+        ):
+            test_df = (
+                test_df.sample(
+                    n=max_test_rows_per_activity,
+                    random_state=RANDOM_STATE,
+                )
+                .sort_values(
+                    "distance_from_start_m",
+                    kind="mergesort",
+                )
+                .reset_index(drop=True)
+            )
+
+        # -------------------------------------------------------------
+        # Micro
+        # -------------------------------------------------------------
+
+        micro_result = (
+            _predict_held_out_activity_micro(
+                training_df,
+                test_df,
+            )
+        )
+
+        # -------------------------------------------------------------
+        # Macro
+        # -------------------------------------------------------------
+
+        macro_result = (
+            _predict_held_out_activity_macro(
+                training_df,
+                test_df,
+            )
+        )
+
+        # -------------------------------------------------------------
+        # Combine
+        # -------------------------------------------------------------
+
+        detail = test_df[
+            [
+                "activity_id",
+                "activity_name",
+                "distance_from_start_m",
+                "actual_segment_time_s",
+            ]
+        ].reset_index(
+            drop=True
+        ).copy()
+
+        detail[
+            "micro_predicted_time_s"
+        ] = micro_result[
+            "micro_predicted_time_s"
+        ].to_numpy()
+
+        detail[
+            "micro_error_s"
+        ] = micro_result[
+            "micro_error_s"
+        ].to_numpy()
+
+        detail[
+            "micro_abs_error_s"
+        ] = micro_result[
+            "micro_abs_error_s"
+        ].to_numpy()
+
+        detail[
+            "macro_predicted_time_s"
+        ] = macro_result[
+            "macro_predicted_time_s"
+        ].to_numpy()
+
+        detail[
+            "macro_error_s"
+        ] = (
+            detail[
+                "macro_predicted_time_s"
+            ]
+            - detail[
+                "actual_segment_time_s"
+            ]
+        )
+
+        detail[
+            "macro_abs_error_s"
+        ] = detail[
+            "macro_error_s"
+        ].abs()
+
+        detail[
+            "micro_minus_macro_s"
+        ] = (
+            detail[
+                "micro_predicted_time_s"
+            ]
+            - detail[
+                "macro_predicted_time_s"
+            ]
+        )
+
+        detail[
+            "analogue_1_distance"
+        ] = micro_result[
+            "analogue_1_distance"
+        ].to_numpy()
+
+        detail[
+            "analogue_1_time_s"
+        ] = micro_result[
+            "analogue_1_time_s"
+        ].to_numpy()
+
+        detail[
+            "analogue_1_activity_id"
+        ] = micro_result[
+            "analogue_1_activity_id"
+        ].to_numpy()
+
+        detail[
+            "analogue_2_distance"
+        ] = micro_result[
+            "analogue_2_distance"
+        ].to_numpy()
+
+        detail[
+            "analogue_2_time_s"
+        ] = micro_result[
+            "analogue_2_time_s"
+        ].to_numpy()
+
+        detail[
+            "analogue_2_activity_id"
+        ] = micro_result[
+            "analogue_2_activity_id"
+        ].to_numpy()
+
+        detail_frames.append(
+            detail
+        )
+
+        # -------------------------------------------------------------
+        # Segment-level metrics
+        # -------------------------------------------------------------
+
+        actual = detail[
+            "actual_segment_time_s"
+        ].to_numpy(
+            dtype=float
+        )
+
+        micro_pred = detail[
+            "micro_predicted_time_s"
+        ].to_numpy(
+            dtype=float
+        )
+
+        macro_pred = detail[
+            "macro_predicted_time_s"
+        ].to_numpy(
+            dtype=float
+        )
+
+        micro_error = (
+            micro_pred
+            - actual
+        )
+
+        macro_error = (
+            macro_pred
+            - actual
+        )
+
+        # -------------------------------------------------------------
+        # Cumulative finish-time comparison
+        # -------------------------------------------------------------
+        #
+        # We explicitly do NOT add aid-station logic here because this is
+        # historical FIT validation of the learned 50 m running response.
+        # The actual FIT elapsed_time_s already contains whatever happened
+        # during the race.
+        # -------------------------------------------------------------
+
+        actual_finish = float(
+            test_df[
+                "elapsed_time_s"
+            ].iloc[-1]
+        )
+
+        cumulative_micro = float(
+            np.sum(
+                micro_pred
+            )
+        )
+
+        cumulative_macro = float(
+            np.sum(
+                macro_pred
+            )
+        )
+
+        summary_rows.append(
+            {
+                "activity_id": held_out_id,
+                "activity_name": held_out_name,
+
+                "training_activities": int(
+                    training_df[
+                        "activity_id"
+                    ].nunique()
+                ),
+
+                "training_rows": int(
+                    len(training_df)
+                ),
+
+                "test_rows": int(
+                    len(test_df)
+                ),
+
+                # -----------------------------------------------------
+                # Segment MAE
+                # -----------------------------------------------------
+
+                "micro_mae_s": float(
+                    np.mean(
+                        np.abs(
+                            micro_error
+                        )
+                    )
+                ),
+
+                "macro_mae_s": float(
+                    np.mean(
+                        np.abs(
+                            macro_error
+                        )
+                    )
+                ),
+
+                "micro_median_abs_error_s": float(
+                    np.median(
+                        np.abs(
+                            micro_error
+                        )
+                    )
+                ),
+
+                "macro_median_abs_error_s": float(
+                    np.median(
+                        np.abs(
+                            macro_error
+                        )
+                    )
+                ),
+
+                # -----------------------------------------------------
+                # Bias
+                # -----------------------------------------------------
+
+                "micro_bias_s": float(
+                    np.mean(
+                        micro_error
+                    )
+                ),
+
+                "macro_bias_s": float(
+                    np.mean(
+                        macro_error
+                    )
+                ),
+
+                # -----------------------------------------------------
+                # Micro versus macro
+                # -----------------------------------------------------
+
+                "mean_micro_minus_macro_s": float(
+                    np.mean(
+                        micro_pred
+                        - macro_pred
+                    )
+                ),
+
+                "median_micro_minus_macro_s": float(
+                    np.median(
+                        micro_pred
+                        - macro_pred
+                    )
+                ),
+
+                "mean_abs_micro_minus_macro_s": float(
+                    np.mean(
+                        np.abs(
+                            micro_pred
+                            - macro_pred
+                        )
+                    )
+                ),
+
+                # -----------------------------------------------------
+                # Cumulative finish
+                # -----------------------------------------------------
+
+                "actual_elapsed_time_s": actual_finish,
+
+                "micro_predicted_total_time_s": cumulative_micro,
+
+                "macro_predicted_total_time_s": cumulative_macro,
+
+                "micro_finish_error_s": (
+                    cumulative_micro
+                    - actual_finish
+                ),
+
+                "macro_finish_error_s": (
+                    cumulative_macro
+                    - actual_finish
+                ),
+
+                "micro_finish_error_min": (
+                    cumulative_micro
+                    - actual_finish
+                ) / 60.0,
+
+                "macro_finish_error_min": (
+                    cumulative_macro
+                    - actual_finish
+                ) / 60.0,
+            }
+        )
+
+    summary_df = pd.DataFrame(
+        summary_rows
+    )
+
+    detail_df = (
+        pd.concat(
+            detail_frames,
+            ignore_index=True,
+        )
+        if detail_frames
+        else pd.DataFrame()
+    )
+
+    return (
+        summary_df,
+        detail_df,
+    )
+
+
+# =============================================================================
+# All diagnostics
 # =============================================================================
 
 def build_all_diagnostics(
@@ -834,11 +1436,7 @@ def build_all_diagnostics(
     uploaded_fit_files,
     macro_model,
 ) -> dict[str, pd.DataFrame]:
-    """
-    Build all diagnostics in one place.
 
-    The production application does not depend on this function.
-    """
     diagnostic_sample = build_learning_diagnostic_sample(
         learning_df
     )
@@ -884,4 +1482,4 @@ def build_all_diagnostics(
         "stop_intervals": stop_intervals,
         "stop_macro_comparison": stop_macro_comparison,
     }
-  
+    
