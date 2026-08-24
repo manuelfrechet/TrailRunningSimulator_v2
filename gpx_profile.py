@@ -27,9 +27,7 @@ def _extract_gpx_points(
     """
     Read raw GPX track points in their original order.
 
-    No resampling.
-    No smoothing.
-    No interpolation.
+    No terrain resampling or smoothing is performed here.
     """
     uploaded_file.seek(0)
 
@@ -69,8 +67,6 @@ def _calculate_cumulative_distance(
 ) -> pd.Series:
     """
     Calculate cumulative horizontal distance from raw GPX coordinates.
-
-    Uses point-to-point haversine distance.
     """
     if df is None or df.empty:
         return pd.Series(
@@ -80,12 +76,16 @@ def _calculate_cumulative_distance(
     latitude = pd.to_numeric(
         df["latitude"],
         errors="coerce",
-    ).to_numpy(dtype=float)
+    ).to_numpy(
+        dtype=float
+    )
 
     longitude = pd.to_numeric(
         df["longitude"],
         errors="coerce",
-    ).to_numpy(dtype=float)
+    ).to_numpy(
+        dtype=float
+    )
 
     if len(df) == 1:
         return pd.Series(
@@ -94,8 +94,13 @@ def _calculate_cumulative_distance(
             dtype="float64",
         )
 
-    lat = np.radians(latitude)
-    lon = np.radians(longitude)
+    lat = np.radians(
+        latitude
+    )
+
+    lon = np.radians(
+        longitude
+    )
 
     previous_lat = np.roll(
         lat,
@@ -166,9 +171,13 @@ def _prepare_raw_gpx(
     uploaded_file,
 ) -> pd.DataFrame:
     """
-    Prepare raw GPX data.
+    Prepare the raw GPX spatial table.
 
-    Raw terrain quantities are calculated BEFORE normalization.
+    This step only establishes:
+        - raw course distance
+        - raw elevation
+
+    It does NOT calculate ascent/descent for the model.
     """
     raw_df = _extract_gpx_points(
         uploaded_file
@@ -178,10 +187,6 @@ def _prepare_raw_gpx(
         return pd.DataFrame()
 
     df = raw_df.copy()
-
-    # -------------------------------------------------------------------------
-    # Numeric fields
-    # -------------------------------------------------------------------------
 
     df["latitude"] = pd.to_numeric(
         df["latitude"],
@@ -211,7 +216,7 @@ def _prepare_raw_gpx(
         return pd.DataFrame()
 
     # -------------------------------------------------------------------------
-    # Raw cumulative horizontal distance
+    # Raw cumulative distance
     # -------------------------------------------------------------------------
 
     df[
@@ -223,7 +228,8 @@ def _prepare_raw_gpx(
     # -------------------------------------------------------------------------
     # Elevation
     #
-    # Fill missing values only at existing raw points.
+    # Fill missing elevations only at existing raw points.
+    # We do not create new spatial points.
     # -------------------------------------------------------------------------
 
     distance = df[
@@ -260,7 +266,7 @@ def _prepare_raw_gpx(
     )
 
     # -------------------------------------------------------------------------
-    # Collapse consecutive near-duplicate spatial positions.
+    # Collapse consecutive / effectively duplicate horizontal positions.
     # -------------------------------------------------------------------------
 
     distance = df[
@@ -308,63 +314,21 @@ def _prepare_raw_gpx(
         <= 0.0
     ):
         raise ValueError(
-            "GPX cumulative distance is not strictly increasing "
-            "after duplicate-distance points were removed."
+            "GPX cumulative distance is not strictly increasing."
         )
-
-    # =============================================================================
-    # Raw terrain calculation
-    # =============================================================================
-
-    elevation = df[
-        "elevation_m"
-    ].to_numpy(
-        dtype=float
-    )
-
-    delta_elevation = np.diff(
-        elevation,
-        prepend=elevation[0],
-    )
-
-    df[
-        "ascent_m"
-    ] = np.maximum(
-        delta_elevation,
-        0.0,
-    )
-
-    df[
-        "descent_m"
-    ] = np.maximum(
-        -delta_elevation,
-        0.0,
-    )
-
-    df[
-        "cumulative_ascent_m"
-    ] = df[
-        "ascent_m"
-    ].cumsum()
-
-    df[
-        "cumulative_descent_m"
-    ] = df[
-        "descent_m"
-    ].cumsum()
 
     return df
 
 
 # =============================================================================
-# Raw GPX table for diagnostics
+# Raw GPX diagnostic table
 # =============================================================================
 
 def load_raw_gpx_table(
     uploaded_file,
 ) -> pd.DataFrame:
     """
-    Return the raw GPX table including raw terrain calculations.
+    Return the raw GPX table for inspection.
     """
     raw_df = _prepare_raw_gpx(
         uploaded_file
@@ -379,36 +343,26 @@ def load_raw_gpx_table(
             "latitude",
             "longitude",
             "elevation_m",
-            "ascent_m",
-            "descent_m",
-            "cumulative_ascent_m",
-            "cumulative_descent_m",
             "timestamp",
         ]
     ].copy()
 
 
 # =============================================================================
-# Normalized boundary interpolation
+# Normalized elevation interpolation
 # =============================================================================
 
-def _interpolate_boundary_values(
+def _interpolate_boundary_elevation(
     raw_df: pd.DataFrame,
     boundary_distance_m: float,
-) -> dict[str, float]:
+) -> float:
     """
-    Determine normalized values at one boundary.
+    Determine elevation at one normalized boundary.
 
-    If a raw point exists exactly at the boundary:
-        use raw values.
-
-    Otherwise:
-        linearly interpolate between the two surrounding raw points.
-
-    Interpolated:
-        elevation
-        cumulative ascent
-        cumulative descent
+    Rule:
+        - exact raw GPX point -> use raw elevation
+        - otherwise -> linear interpolation between the two surrounding
+          raw GPX points
     """
     distance = raw_df[
         "distance_from_start_m"
@@ -418,18 +372,6 @@ def _interpolate_boundary_values(
 
     elevation = raw_df[
         "elevation_m"
-    ].to_numpy(
-        dtype=float
-    )
-
-    cumulative_ascent = raw_df[
-        "cumulative_ascent_m"
-    ].to_numpy(
-        dtype=float
-    )
-
-    cumulative_descent = raw_df[
-        "cumulative_descent_m"
     ].to_numpy(
         dtype=float
     )
@@ -450,22 +392,14 @@ def _interpolate_boundary_values(
         exact_indices
     ) > 0:
 
-        index = exact_indices[0]
-
-        return {
-            "elevation_m": float(
-                elevation[index]
-            ),
-            "cumulative_ascent_m": float(
-                cumulative_ascent[index]
-            ),
-            "cumulative_descent_m": float(
-                cumulative_descent[index]
-            ),
-        }
+        return float(
+            elevation[
+                exact_indices[0]
+            ]
+        )
 
     # -------------------------------------------------------------------------
-    # Surrounding raw points
+    # Find two surrounding raw points
     # -------------------------------------------------------------------------
 
     right_index = int(
@@ -502,6 +436,18 @@ def _interpolate_boundary_values(
         ]
     )
 
+    y0 = float(
+        elevation[
+            left_index
+        ]
+    )
+
+    y1 = float(
+        elevation[
+            right_index
+        ]
+    )
+
     if x1 <= x0:
         raise ValueError(
             "Invalid raw GPX distance interval."
@@ -515,69 +461,34 @@ def _interpolate_boundary_values(
         - x0
     )
 
-    def interpolate(
-        y0: float,
-        y1: float,
-    ) -> float:
-        return float(
-            y0
-            + fraction
-            * (
-                y1
-                - y0
-            )
+    return float(
+        y0
+        + fraction
+        * (
+            y1
+            - y0
         )
-
-    return {
-        "elevation_m": interpolate(
-            float(
-                elevation[
-                    left_index
-                ]
-            ),
-            float(
-                elevation[
-                    right_index
-                ]
-            ),
-        ),
-        "cumulative_ascent_m": interpolate(
-            float(
-                cumulative_ascent[
-                    left_index
-                ]
-            ),
-            float(
-                cumulative_ascent[
-                    right_index
-                ]
-            ),
-        ),
-        "cumulative_descent_m": interpolate(
-            float(
-                cumulative_descent[
-                    left_index
-                ]
-            ),
-            float(
-                cumulative_descent[
-                    right_index
-                ]
-            ),
-        ),
-    }
+    )
 
 
 # =============================================================================
-# Normalized boundaries
+# Normalized elevation profile
 # =============================================================================
 
-def _build_normalized_boundaries(
+def _build_normalized_elevation_profile(
     raw_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Build normalized boundaries using the project-wide
-    TRANSITION_LENGTH_M.
+    Build the normalized elevation profile.
+
+    Boundaries are:
+
+        0
+        TRANSITION_LENGTH_M
+        2 * TRANSITION_LENGTH_M
+        ...
+
+    ONLY elevation is interpolated from the raw GPX.
     """
     if raw_df is None or raw_df.empty:
         return pd.DataFrame()
@@ -606,18 +517,9 @@ def _build_normalized_boundaries(
         * TRANSITION_LENGTH_M
     )
 
-    rows: list[dict[str, Any]] = []
+    rows: list[dict[str, float]] = []
 
     for boundary_distance_m in boundary_distances:
-
-        values = (
-            _interpolate_boundary_values(
-                raw_df,
-                float(
-                    boundary_distance_m
-                ),
-            )
-        )
 
         rows.append(
             {
@@ -625,19 +527,12 @@ def _build_normalized_boundaries(
                     boundary_distance_m
                 ),
                 "elevation_m": (
-                    values[
-                        "elevation_m"
-                    ]
-                ),
-                "cumulative_ascent_m": (
-                    values[
-                        "cumulative_ascent_m"
-                    ]
-                ),
-                "cumulative_descent_m": (
-                    values[
-                        "cumulative_descent_m"
-                    ]
+                    _interpolate_boundary_elevation(
+                        raw_df,
+                        float(
+                            boundary_distance_m
+                        ),
+                    )
                 ),
             }
         )
@@ -648,98 +543,96 @@ def _build_normalized_boundaries(
 
 
 # =============================================================================
-# Normalized segments
+# Normalized terrain calculation
 # =============================================================================
 
-def _build_normalized_segments(
-    boundary_df: pd.DataFrame,
+def _calculate_normalized_terrain(
+    elevation_profile_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Build non-overlapping normalized segments.
+    Calculate ascent/descent from the normalized elevation profile ONLY.
 
-    Segment ascent/descent are calculated from differences between normalized
-    cumulative values.
+    This is the key V0 definition.
 
-    Grade is net elevation change divided by TRANSITION_LENGTH_M.
+    Raw sub-segment elevation fluctuations are deliberately NOT accumulated.
+
+    For each normalized segment:
+
+        delta_elevation =
+            elevation_end
+            - elevation_start
+
+        ascent =
+            max(delta_elevation, 0)
+
+        descent =
+            max(-delta_elevation, 0)
+
+    Then cumulative ascent/descent are calculated from the normalized
+    segments.
     """
     if (
-        boundary_df is None
-        or boundary_df.empty
+        elevation_profile_df is None
+        or elevation_profile_df.empty
     ):
         return pd.DataFrame()
 
+    distance = elevation_profile_df[
+        "distance_from_start_m"
+    ].to_numpy(
+        dtype=float
+    )
+
+    elevation = elevation_profile_df[
+        "elevation_m"
+    ].to_numpy(
+        dtype=float
+    )
+
+    if len(distance) < 2:
+        return pd.DataFrame()
+
+    delta_elevation = np.diff(
+        elevation
+    )
+
+    segment_ascent = np.maximum(
+        delta_elevation,
+        0.0,
+    )
+
+    segment_descent = np.maximum(
+        -delta_elevation,
+        0.0,
+    )
+
+    cumulative_ascent = np.cumsum(
+        segment_ascent
+    )
+
+    cumulative_descent = np.cumsum(
+        segment_descent
+    )
+
     rows: list[dict[str, Any]] = []
 
-    for index in range(
-        len(boundary_df) - 1
+    for i in range(
+        len(delta_elevation)
     ):
-
-        start = boundary_df.iloc[
-            index
-        ]
-
-        end = boundary_df.iloc[
-            index + 1
-        ]
-
         start_distance = float(
-            start[
-                "distance_from_start_m"
-            ]
+            distance[i]
         )
 
         end_distance = float(
-            end[
-                "distance_from_start_m"
-            ]
+            distance[i + 1]
         )
 
         start_elevation = float(
-            start[
-                "elevation_m"
-            ]
+            elevation[i]
         )
 
         end_elevation = float(
-            end[
-                "elevation_m"
-            ]
-        )
-
-        start_cum_ascent = float(
-            start[
-                "cumulative_ascent_m"
-            ]
-        )
-
-        end_cum_ascent = float(
-            end[
-                "cumulative_ascent_m"
-            ]
-        )
-
-        start_cum_descent = float(
-            start[
-                "cumulative_descent_m"
-            ]
-        )
-
-        end_cum_descent = float(
-            end[
-                "cumulative_descent_m"
-            ]
-        )
-
-        ascent = max(
-            0.0,
-            end_cum_ascent
-            - start_cum_ascent,
-        )
-
-        descent = max(
-            0.0,
-            end_cum_descent
-            - start_cum_descent,
+            elevation[i + 1]
         )
 
         grade_pct = (
@@ -753,6 +646,7 @@ def _build_normalized_segments(
 
         rows.append(
             {
+                # Row represents the end of the segment.
                 "distance_from_start_m": (
                     end_distance
                 ),
@@ -768,19 +662,19 @@ def _build_normalized_segments(
                 "elevation_end_m": (
                     end_elevation
                 ),
-                "ascent_m": (
-                    ascent
+                "ascent_m": float(
+                    segment_ascent[i]
                 ),
-                "descent_m": (
-                    descent
+                "descent_m": float(
+                    segment_descent[i]
                 ),
-                "cumulative_ascent_m": (
-                    end_cum_ascent
+                "cumulative_ascent_m": float(
+                    cumulative_ascent[i]
                 ),
-                "cumulative_descent_m": (
-                    end_cum_descent
+                "cumulative_descent_m": float(
+                    cumulative_descent[i]
                 ),
-                "grade_pct": (
+                "grade_pct": float(
                     grade_pct
                 ),
             }
@@ -799,13 +693,12 @@ def add_aid_stations(
     profile_df: pd.DataFrame,
     aid_stations: list[
         dict[str, Any]
-    ]
-    | None = None,
+    ] | None = None,
 ) -> pd.DataFrame:
     """
     Attach aid-station metadata to the nearest normalized endpoint.
 
-    Stop time is stored but not applied.
+    Stop duration is stored but not applied here.
     """
     if (
         profile_df is None
@@ -893,12 +786,24 @@ def build_gpx_profile(
     uploaded_file,
     aid_stations: list[
         dict[str, Any]
-    ]
-    | None = None,
+    ] | None = None,
 ) -> pd.DataFrame:
     """
-    Build the normalized GPX terrain profile using the project-wide
-    TRANSITION_LENGTH_M.
+    Build the normalized GPX terrain profile.
+
+    V0 process:
+
+        raw GPX
+            ↓
+        raw horizontal distance
+            ↓
+        normalized 50/1000/... m boundaries
+            ↓
+        interpolate ONLY elevation
+            ↓
+        calculate ascent/descent from normalized elevation
+            ↓
+        calculate cumulative ascent/descent
     """
     raw_df = _prepare_raw_gpx(
         uploaded_file
@@ -909,21 +814,21 @@ def build_gpx_profile(
             "No usable GPX points were found."
         )
 
-    boundary_df = (
-        _build_normalized_boundaries(
+    normalized_elevation = (
+        _build_normalized_elevation_profile(
             raw_df
         )
     )
 
-    if boundary_df.empty:
+    if normalized_elevation.empty:
         raise ValueError(
             f"GPX is shorter than "
             f"{TRANSITION_LENGTH_M:.0f} m."
         )
 
     profile_df = (
-        _build_normalized_segments(
-            boundary_df
+        _calculate_normalized_terrain(
+            normalized_elevation
         )
     )
 
@@ -942,7 +847,7 @@ def summarize_gpx_profile(
     profile_df: pd.DataFrame,
 ) -> dict[str, Any]:
     """
-    Return compact normalized GPX summary.
+    Return a compact normalized GPX summary.
     """
     if (
         profile_df is None
