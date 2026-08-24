@@ -521,7 +521,6 @@ if (
                 loo_summary, loo_detail = (
                     build_leave_one_activity_out_validation(
                         learning_df=learning_df,
-                        max_test_rows_per_activity=None,
                     )
                 )
 
