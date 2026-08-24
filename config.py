@@ -37,4 +37,4 @@ LEARNING_STEP_M = 1.0
 #   change ONLY this value to 1000.0
 # After the experiment, restore it to 50.0.
 
-TRANSITION_LENGTH_M = 1000.0
+TRANSITION_LENGTH_M = 100.0
