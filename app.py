@@ -603,3 +603,105 @@ if (
                 key="download_loo_details",
             )
             
+# =============================================================================
+# TEMPORARY GPX PROFILE TEST
+# =============================================================================
+
+st.divider()
+st.header("GPX 50 m profile test")
+
+from gpx_profile import (
+    build_gpx_profile,
+    summarize_gpx_profile,
+)
+
+uploaded_gpx_file = st.file_uploader(
+    "Upload a GPX file for normalization test",
+    type=["gpx"],
+    key="gpx_profile_test_upload",
+)
+
+if uploaded_gpx_file is not None:
+
+    if st.button(
+        "Build 50 m GPX profile",
+        key="build_gpx_profile_test",
+    ):
+
+        try:
+
+            with st.spinner(
+                "Building normalized 50 m GPX profile..."
+            ):
+                gpx_profile_df = build_gpx_profile(
+                    uploaded_gpx_file,
+                    aid_stations=None,
+                )
+
+            st.session_state[
+                "gpx_profile_test_df"
+            ] = gpx_profile_df
+
+            st.success(
+                "50 m GPX profile created."
+            )
+
+        except Exception as exc:
+
+            st.error(
+                f"GPX profile failed: {exc}"
+            )
+
+            st.exception(exc)
+
+
+gpx_profile_df = st.session_state.get(
+    "gpx_profile_test_df"
+)
+
+if (
+    gpx_profile_df is not None
+    and not gpx_profile_df.empty
+):
+
+    profile_summary = summarize_gpx_profile(
+        gpx_profile_df
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            "50 m segments",
+            f"{profile_summary['n_segments']:,}",
+        )
+
+    with col2:
+        st.metric(
+            "Normalized distance",
+            f"{profile_summary['distance_m'] / 1000:.2f} km",
+        )
+
+    with col3:
+        st.metric(
+            "Cumulative ascent",
+            f"{profile_summary['cumulative_ascent_m']:.0f} m",
+        )
+
+    st.write(
+        f"Cumulative descent: "
+        f"{profile_summary['cumulative_descent_m']:.0f} m"
+    )
+
+    st.dataframe(
+        gpx_profile_df,
+        width="stretch",
+    )
+
+    st.download_button(
+        label="Download normalized GPX profile",
+        data=gpx_profile_df.to_csv(index=False),
+        file_name="normalized_gpx_profile_v0.csv",
+        mime="text/csv",
+        key="download_gpx_profile_test",
+    )
