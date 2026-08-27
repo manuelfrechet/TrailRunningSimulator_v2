@@ -5,6 +5,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from aid_stations import (
+    AidStation,
+    aid_station_stop_seconds,
+    get_aid_station_at_profile_row,
+)
 from config import GPX_SEGMENT_LENGTH_M
 from macro_model import MacroModel
 from micro_model import MicroModel
@@ -29,12 +34,13 @@ from micro_model import MicroModel
 #
 # For every segment:
 #
-#     1. determine the terrain state at the segment start
-#     2. predict the segment with the macro model
-#     3. predict the segment with the micro model
-#     4. advance both clocks
-#     5. apply any aid-station stop to both clocks
-#     6. continue to the next segment
+#     1. determine the terrain state at the segment start;
+#     2. predict with macro;
+#     3. predict with micro;
+#     4. record arrival times;
+#     5. process any aid-station stop;
+#     6. advance both clocks;
+#     7. continue to the next segment.
 #
 # Macro and micro remain independent.
 #
@@ -42,21 +48,21 @@ from micro_model import MicroModel
 # elapsed_time_s is one of its seven state variables.
 #
 # -----------------------------------------------------------------------------
-# IMPORTANT V0 PHYSICAL CONSTRAINT
+# IMPORTANT V0 MACRO CONSTRAINT
 # -----------------------------------------------------------------------------
 #
-# The polynomial macro model can occasionally produce:
+# The unconstrained polynomial macro model can occasionally produce:
 #
 #     M(X[k+1]) < M(X[k])
 #
-# which would imply a negative segment duration.
+# which implies a negative segment duration.
 #
 # For V0:
 #
-#     macro_segment_time = max(raw_macro_segment_time, 0)
+#     macro_segment_time =
+#         max(raw_macro_segment_time, 0)
 #
-# We also preserve the raw value so that diagnostics can tell us whether
-# clipping is rare and harmless or frequent and problematic.
+# The raw value remains available for diagnostics.
 # =============================================================================
 
 
@@ -122,7 +128,10 @@ def _validate_profile(
             "GPX profile contains no segments."
         )
 
-    # First row represents the end of the first segment.
+    # -------------------------------------------------------------------------
+    # First profile row represents the END of the first segment.
+    # -------------------------------------------------------------------------
+
     expected_first = float(
         GPX_SEGMENT_LENGTH_M
     )
@@ -139,6 +148,10 @@ def _validate_profile(
             f"{GPX_SEGMENT_LENGTH_M:.2f} m, "
             f"found {distance[0]:.2f} m."
         )
+
+    # -------------------------------------------------------------------------
+    # Subsequent endpoints must advance by exactly the configured length.
+    # -------------------------------------------------------------------------
 
     if len(distance) >= 2:
 
@@ -159,7 +172,7 @@ def _validate_profile(
 
 
 # =============================================================================
-# Segment start state
+# Segment-start state
 # =============================================================================
 
 def _get_segment_start_state(
@@ -167,17 +180,22 @@ def _get_segment_start_state(
     row_index: int,
 ) -> dict[str, float]:
     """
-    Return the terrain state at the START of one segment.
+    Return the terrain state at the START of one GPX segment.
 
-    The GPX profile stores segment END rows.
+    Profile rows represent segment endpoints.
 
-    Therefore:
+    Example:
 
-        row 0 = 0 -> segment_length
-        row 1 = segment_length -> 2 * segment_length
-        ...
+        row 0:
+            100 m endpoint
+            segment = 0 -> 100 m
+
+        row 1:
+            200 m endpoint
+            segment = 100 -> 200 m
     """
     if row_index == 0:
+
         return {
             "distance_from_start_m": 0.0,
             "cumulative_ascent_m": 0.0,
@@ -215,17 +233,19 @@ def _predict_macro_segment(
     macro_model: MacroModel,
     start_state: dict[str, float],
     end_row: pd.Series,
-) -> tuple[float, float]:
+) -> tuple[
+    float,
+    float,
+]:
     """
-    Predict one segment with the macro model.
+    Predict one GPX segment using the macro model.
 
     Returns:
 
         macro_segment_time_s
         raw_macro_segment_time_s
 
-    The raw value is retained so the simulator can report whether the
-    physical non-negative-duration constraint was activated.
+    The raw value is retained for diagnostics.
     """
 
     start_prediction = (
@@ -300,14 +320,15 @@ def _predict_macro_segment(
     if not np.isfinite(
         raw_segment_time_s
     ):
+
         raise ValueError(
             "Macro model returned an invalid segment time."
         )
 
     # -------------------------------------------------------------------------
-    # V0 physical constraint.
+    # V0 physical constraint:
     #
-    # Elapsed time cannot move backwards.
+    # elapsed time cannot move backwards.
     # -------------------------------------------------------------------------
 
     segment_time_s = max(
@@ -332,10 +353,9 @@ def _predict_micro_segment(
     end_row: pd.Series,
 ) -> dict[str, Any]:
     """
-    Predict one segment with the micro analogue model.
+    Predict one GPX segment using the micro analogue model.
 
-    The elapsed_time_s supplied to the micro model is the CURRENT simulated
-    micro elapsed time.
+    elapsed_time_s is the CURRENT simulated micro elapsed time.
     """
 
     prediction = micro_model.predict_one(
@@ -383,82 +403,18 @@ def _predict_micro_segment(
     if not np.isfinite(
         predicted_time_s
     ):
+
         raise ValueError(
             "Micro model returned an invalid segment time."
         )
 
     if predicted_time_s < 0.0:
+
         raise ValueError(
             "Micro model returned a negative segment time."
         )
 
     return prediction
-
-
-# =============================================================================
-# Aid-station handling
-# =============================================================================
-
-def _get_aid_station_info(
-    row: pd.Series,
-) -> tuple[str, float]:
-    """
-    Return:
-
-        aid_station_name
-        stop_minutes
-
-    No station means:
-
-        ""
-        0.0
-    """
-
-    station_name = ""
-
-    if (
-        "aid_station_name"
-        in row.index
-    ):
-
-        value = row[
-            "aid_station_name"
-        ]
-
-        if (
-            value is not None
-            and not pd.isna(value)
-        ):
-
-            station_name = str(
-                value
-            )
-
-    stop_minutes = 0.0
-
-    if (
-        "aid_station_stop_min"
-        in row.index
-    ):
-
-        value = row[
-            "aid_station_stop_min"
-        ]
-
-        if (
-            value is not None
-            and not pd.isna(value)
-        ):
-
-            stop_minutes = max(
-                0.0,
-                float(value),
-            )
-
-    return (
-        station_name,
-        stop_minutes,
-    )
 
 
 # =============================================================================
@@ -474,30 +430,31 @@ def simulate_race(
     dict[str, Any],
 ]:
     """
-    Simulate one GPX trajectory.
+    Simulate one GPX race.
 
-    Simulation advances one GPX_SEGMENT_LENGTH_M segment at a time.
+    The race advances exactly one GPX_SEGMENT_LENGTH_M at a time.
 
-    Macro:
-        predicts terrain-based segment time independently.
+    Macro and micro have independent elapsed-time clocks.
 
-    Micro:
-        searches the historical library using the current simulated state.
+    At an aid station:
 
-    Aid stations:
-        stop time is added to BOTH clocks after arrival.
+        arrive
+        ↓
+        add expected stop duration to BOTH clocks
+        ↓
+        continue
 
-    Returns:
-        simulation dataframe
-        race summary
+    The aid-station stop is not running time.
     """
 
     if macro_model is None:
+
         raise ValueError(
             "macro_model is required."
         )
 
     if micro_model is None:
+
         raise ValueError(
             "micro_model is required."
         )
@@ -519,17 +476,19 @@ def simulate_race(
     )
 
     # -------------------------------------------------------------------------
-    # Independent simulation clocks.
+    # Independent elapsed-time clocks.
     # -------------------------------------------------------------------------
 
     macro_elapsed_s = 0.0
     micro_elapsed_s = 0.0
 
-    rows: list[dict[str, Any]] = []
+    rows: list[
+        dict[str, Any]
+    ] = []
 
-    # -------------------------------------------------------------------------
-    # Segment-by-segment simulation.
-    # -------------------------------------------------------------------------
+    # =============================================================================
+    # Segment-by-segment simulation
+    # =============================================================================
 
     for row_index in range(
         len(profile)
@@ -600,7 +559,7 @@ def simulate_race(
         )
 
         # =====================================================================
-        # MODEL DIFFERENCE
+        # SEGMENT DIFFERENCE
         # =====================================================================
 
         segment_difference_s = (
@@ -608,31 +567,50 @@ def simulate_race(
             - macro_segment_time_s
         )
 
-        arrival_difference_s = (
-            micro_arrival_s
-            - macro_arrival_s
-        )
-
         # =====================================================================
         # AID STATION
         # =====================================================================
 
-        (
-            aid_station_name,
-            aid_stop_minutes,
-        ) = _get_aid_station_info(
-            end_row
+        aid_station = (
+            get_aid_station_at_profile_row(
+                end_row
+            )
         )
 
         aid_stop_s = (
-            aid_stop_minutes
-            * 60.0
+            aid_station_stop_seconds(
+                aid_station
+            )
         )
+
+        if aid_station is None:
+
+            aid_station_name = ""
+            aid_station_distance_m = np.nan
+            aid_stop_minutes = 0.0
+
+        else:
+
+            aid_station_name = (
+                aid_station.name
+            )
+
+            aid_station_distance_m = (
+                float(
+                    aid_station.distance_from_start_m
+                )
+            )
+
+            aid_stop_minutes = (
+                float(
+                    aid_station.stop_minutes
+                )
+            )
 
         # =====================================================================
         # DEPARTURE TIMES
         #
-        # Aid-station time is added AFTER arrival.
+        # Stop is applied AFTER arrival.
         # =====================================================================
 
         macro_departure_s = (
@@ -643,6 +621,11 @@ def simulate_race(
         micro_departure_s = (
             micro_arrival_s
             + aid_stop_s
+        )
+
+        arrival_difference_s = (
+            micro_arrival_s
+            - macro_arrival_s
         )
 
         departure_difference_s = (
@@ -713,7 +696,7 @@ def simulate_race(
                 ),
 
                 # -----------------------------------------------------------------
-                # Macro
+                # Macro prediction
                 # -----------------------------------------------------------------
 
                 "raw_macro_predicted_time_s": (
@@ -729,7 +712,7 @@ def simulate_race(
                 ),
 
                 # -----------------------------------------------------------------
-                # Micro
+                # Micro prediction
                 # -----------------------------------------------------------------
 
                 "micro_predicted_time_s": (
@@ -745,7 +728,7 @@ def simulate_race(
                 ),
 
                 # -----------------------------------------------------------------
-                # Cumulative arrival times
+                # Cumulative arrival time
                 # -----------------------------------------------------------------
 
                 "macro_arrival_time_s": (
@@ -768,6 +751,10 @@ def simulate_race(
                     aid_station_name
                 ),
 
+                "aid_station_distance_m": (
+                    aid_station_distance_m
+                ),
+
                 "aid_station_stop_min": (
                     aid_stop_minutes
                 ),
@@ -777,7 +764,7 @@ def simulate_race(
                 ),
 
                 # -----------------------------------------------------------------
-                # Departure times after aid station
+                # Cumulative departure time
                 # -----------------------------------------------------------------
 
                 "macro_departure_time_s": (
@@ -879,6 +866,7 @@ def simulate_race(
     )
 
     if simulation_df.empty:
+
         raise ValueError(
             "Simulation produced no predictions."
         )
@@ -887,15 +875,15 @@ def simulate_race(
     # RACE SUMMARY
     # =============================================================================
 
+    final_row = simulation_df.iloc[
+        -1
+    ]
+
     total_aid_stop_s = float(
         simulation_df[
             "aid_station_stop_s"
         ].sum()
     )
-
-    final_row = simulation_df.iloc[
-        -1
-    ]
 
     macro_final_arrival_s = float(
         final_row[
@@ -919,24 +907,33 @@ def simulate_race(
         + total_aid_stop_s
     )
 
-    clipped_mask = (
+    macro_clipped_mask = (
         simulation_df[
             "macro_time_clipped"
         ]
     )
 
     macro_clipped_segments = int(
-        clipped_mask.sum()
+        macro_clipped_mask.sum()
     )
+
+    # -------------------------------------------------------------------------
+    # Total magnitude of clipped negative increments.
+    #
+    # Example:
+    #
+    #     raw = -2 s
+    #     clipped = 0 s
+    #
+    # correction = +2 s
+    # -------------------------------------------------------------------------
 
     macro_clipped_seconds = float(
         simulation_df.loc[
-            clipped_mask,
+            macro_clipped_mask,
             "raw_macro_predicted_time_s",
         ]
-        .clip(
-            upper=0.0
-        )
+        .abs()
         .sum()
     )
 
@@ -975,6 +972,10 @@ def simulate_race(
             / 60.0
         ),
 
+        # ---------------------------------------------------------------------
+        # Final arrival
+        # ---------------------------------------------------------------------
+
         "macro_final_arrival_s": (
             macro_final_arrival_s
         ),
@@ -982,6 +983,10 @@ def simulate_race(
         "micro_final_arrival_s": (
             micro_final_arrival_s
         ),
+
+        # ---------------------------------------------------------------------
+        # Final race time, including aid-station stops.
+        # ---------------------------------------------------------------------
 
         "macro_final_race_s": (
             macro_final_race_s
@@ -1015,7 +1020,7 @@ def simulate_race(
         ),
 
         # ---------------------------------------------------------------------
-        # Macro physical-constraint diagnostics
+        # Macro clipping diagnostics
         # ---------------------------------------------------------------------
 
         "macro_clipped_segments": (
@@ -1039,60 +1044,54 @@ def simulate_race(
 
 
 # =============================================================================
-# Formatting helpers
+# Formatting helper
 # =============================================================================
 
 def format_seconds(
     seconds: float,
 ) -> str:
     """
-    Format seconds as H:MM:SS.
+    Format seconds as HH:MM:SS.
     """
     if not np.isfinite(
         seconds
     ):
         return "—"
 
-    seconds = max(
+    total_seconds = max(
         0.0,
-        float(seconds),
+        int(
+            round(
+                float(seconds)
+            )
+        ),
     )
 
-    hours = int(
-        seconds // 3600
+    hours = (
+        total_seconds
+        // 3600
     )
 
-    minutes = int(
-        (
-            seconds
-            % 3600
-        )
-        // 60
+    minutes = (
+        total_seconds
+        % 3600
+    ) // 60
+
+    remaining_seconds = (
+        total_seconds
+        % 60
     )
-
-    remaining_seconds = int(
-        round(
-            seconds
-            % 60
-        )
-    )
-
-    if remaining_seconds == 60:
-
-        remaining_seconds = 0
-        minutes += 1
-
-    if minutes == 60:
-
-        minutes = 0
-        hours += 1
 
     return (
-        f"{hours}:"
+        f"{hours:02d}:"
         f"{minutes:02d}:"
         f"{remaining_seconds:02d}"
     )
 
+
+# =============================================================================
+# Compact simulation summary
+# =============================================================================
 
 def build_simulation_summary(
     simulation_df: pd.DataFrame,
@@ -1147,9 +1146,7 @@ def build_simulation_summary(
             ],
             "raw_macro_predicted_time_s",
         ]
-        .clip(
-            upper=0.0
-        )
+        .abs()
         .sum()
     )
 
@@ -1210,14 +1207,18 @@ def build_simulation_summary(
 
 
 # =============================================================================
-# Aid-station summary
+# Aid-station simulation summary
 # =============================================================================
 
 def build_aid_station_summary(
     simulation_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Extract predicted arrival/departure information for aid stations.
+    Extract arrival/departure predictions at aid stations.
+
+    Arrival times are BEFORE the aid-station stop.
+
+    Departure times are AFTER the stop.
     """
     if (
         simulation_df is None
@@ -1249,6 +1250,7 @@ def build_aid_station_summary(
     return station_rows[
         [
             "aid_station_name",
+            "aid_station_distance_m",
             "distance_from_start_m",
             "aid_station_stop_min",
             "macro_arrival_time_s",
