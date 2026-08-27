@@ -6,6 +6,11 @@ import gpxpy
 import numpy as np
 import pandas as pd
 
+from aid_stations import (
+    AidStation,
+    normalize_aid_stations,
+)
+
 from config import GPX_SEGMENT_LENGTH_M
 
 
@@ -29,20 +34,33 @@ def _extract_gpx_points(
 
     No terrain resampling or smoothing is performed here.
     """
+
     uploaded_file.seek(0)
 
     raw = uploaded_file.read()
 
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8")
+    if isinstance(
+        raw,
+        bytes,
+    ):
+        raw = raw.decode(
+            "utf-8"
+        )
 
-    gpx = gpxpy.parse(raw)
+    gpx = gpxpy.parse(
+        raw
+    )
 
-    rows: list[dict[str, Any]] = []
+    rows: list[
+        dict[str, Any]
+    ] = []
 
     for track in gpx.tracks:
+
         for segment in track.segments:
+
             for point in segment.points:
+
                 rows.append(
                     {
                         "latitude": point.latitude,
@@ -53,9 +71,12 @@ def _extract_gpx_points(
                 )
 
     if not rows:
+
         return pd.DataFrame()
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(
+        rows
+    )
 
 
 # =============================================================================
@@ -70,26 +91,36 @@ def _calculate_cumulative_distance(
 
     Uses point-to-point haversine distance.
     """
-    if df is None or df.empty:
+
+    if (
+        df is None
+        or df.empty
+    ):
+
         return pd.Series(
             dtype="float64"
         )
 
     latitude = pd.to_numeric(
-        df["latitude"],
+        df[
+            "latitude"
+        ],
         errors="coerce",
     ).to_numpy(
         dtype=float
     )
 
     longitude = pd.to_numeric(
-        df["longitude"],
+        df[
+            "longitude"
+        ],
         errors="coerce",
     ).to_numpy(
         dtype=float
     )
 
     if len(df) == 1:
+
         return pd.Series(
             [0.0],
             index=df.index,
@@ -129,13 +160,21 @@ def _calculate_cumulative_distance(
 
     haversine_a = (
         np.sin(
-            delta_lat / 2.0
-        ) ** 2
-        + np.cos(previous_lat)
-        * np.cos(lat)
+            delta_lat
+            / 2.0
+        )
+        ** 2
+        + np.cos(
+            previous_lat
+        )
+        * np.cos(
+            lat
+        )
         * np.sin(
-            delta_lon / 2.0
-        ) ** 2
+            delta_lon
+            / 2.0
+        )
+        ** 2
     )
 
     haversine_a = np.clip(
@@ -181,14 +220,16 @@ def _prepare_raw_gpx(
 
     Raw spatial resolution is preserved.
 
-    Elevation is only cleaned enough to ensure that normalized boundaries
-    can be interpolated.
+    Elevation remains at raw GPX granularity until normalized boundaries
+    are created.
     """
+
     raw_df = _extract_gpx_points(
         uploaded_file
     )
 
     if raw_df.empty:
+
         return pd.DataFrame()
 
     df = raw_df.copy()
@@ -197,18 +238,30 @@ def _prepare_raw_gpx(
     # Numeric conversion
     # -------------------------------------------------------------------------
 
-    df["latitude"] = pd.to_numeric(
-        df["latitude"],
+    df[
+        "latitude"
+    ] = pd.to_numeric(
+        df[
+            "latitude"
+        ],
         errors="coerce",
     )
 
-    df["longitude"] = pd.to_numeric(
-        df["longitude"],
+    df[
+        "longitude"
+    ] = pd.to_numeric(
+        df[
+            "longitude"
+        ],
         errors="coerce",
     )
 
-    df["elevation_m"] = pd.to_numeric(
-        df["elevation_m"],
+    df[
+        "elevation_m"
+    ] = pd.to_numeric(
+        df[
+            "elevation_m"
+        ],
         errors="coerce",
     )
 
@@ -222,10 +275,11 @@ def _prepare_raw_gpx(
     )
 
     if df.empty:
+
         return pd.DataFrame()
 
     # -------------------------------------------------------------------------
-    # Raw cumulative horizontal distance
+    # Raw cumulative horizontal distance.
     # -------------------------------------------------------------------------
 
     df[
@@ -235,22 +289,26 @@ def _prepare_raw_gpx(
     )
 
     # -------------------------------------------------------------------------
-    # Elevation
+    # Elevation.
     #
-    # Only fill missing elevation values at existing raw points.
-    # We do NOT create additional spatial points.
+    # We only fill missing elevation values at existing raw positions.
+    # We do NOT spatially resample the trajectory.
     # -------------------------------------------------------------------------
 
-    distance = df[
-        "distance_from_start_m"
-    ].to_numpy(
-        dtype=float
+    distance = (
+        df[
+            "distance_from_start_m"
+        ].to_numpy(
+            dtype=float
+        )
     )
 
-    elevation = df[
-        "elevation_m"
-    ].to_numpy(
-        dtype=float
+    elevation = (
+        df[
+            "elevation_m"
+        ].to_numpy(
+            dtype=float
+        )
     )
 
     valid_elevation = np.isfinite(
@@ -258,6 +316,7 @@ def _prepare_raw_gpx(
     )
 
     if valid_elevation.sum() < 2:
+
         raise ValueError(
             "GPX does not contain enough valid elevation data."
         )
@@ -275,13 +334,15 @@ def _prepare_raw_gpx(
     )
 
     # -------------------------------------------------------------------------
-    # Collapse consecutive / near-duplicate spatial positions.
+    # Remove consecutive / near-duplicate horizontal positions.
     # -------------------------------------------------------------------------
 
-    distance = df[
-        "distance_from_start_m"
-    ].to_numpy(
-        dtype=float
+    distance = (
+        df[
+            "distance_from_start_m"
+        ].to_numpy(
+            dtype=float
+        )
     )
 
     keep = np.concatenate(
@@ -305,13 +366,16 @@ def _prepare_raw_gpx(
         )
     )
 
-    distance = df[
-        "distance_from_start_m"
-    ].to_numpy(
-        dtype=float
+    distance = (
+        df[
+            "distance_from_start_m"
+        ].to_numpy(
+            dtype=float
+        )
     )
 
     if len(distance) < 2:
+
         raise ValueError(
             "GPX does not contain enough distinct spatial points."
         )
@@ -321,6 +385,7 @@ def _prepare_raw_gpx(
             distance
         ) <= 0.0
     ):
+
         raise ValueError(
             "GPX cumulative distance is not strictly increasing "
             "after duplicate-distance points were removed."
@@ -339,13 +404,15 @@ def load_raw_gpx_table(
     """
     Return the raw GPX table with calculated cumulative distance.
 
-    No normalized terrain quantities are added here.
+    No normalized ascent/descent calculations are added.
     """
+
     raw_df = _prepare_raw_gpx(
         uploaded_file
     )
 
     if raw_df.empty:
+
         return pd.DataFrame()
 
     return raw_df[
@@ -360,7 +427,7 @@ def load_raw_gpx_table(
 
 
 # =============================================================================
-# Normalized boundary elevation
+# Boundary elevation interpolation
 # =============================================================================
 
 def _interpolate_boundary_elevation(
@@ -370,29 +437,34 @@ def _interpolate_boundary_elevation(
     """
     Determine elevation at one normalized GPX boundary.
 
-    Rule:
+    Rules:
 
         exact raw point
             -> use raw elevation
 
         otherwise
-            -> find the two surrounding raw points
+            -> use the two surrounding raw points
             -> linearly interpolate elevation
     """
-    distance = raw_df[
-        "distance_from_start_m"
-    ].to_numpy(
-        dtype=float
+
+    distance = (
+        raw_df[
+            "distance_from_start_m"
+        ].to_numpy(
+            dtype=float
+        )
     )
 
-    elevation = raw_df[
-        "elevation_m"
-    ].to_numpy(
-        dtype=float
+    elevation = (
+        raw_df[
+            "elevation_m"
+        ].to_numpy(
+            dtype=float
+        )
     )
 
     # -------------------------------------------------------------------------
-    # Exact raw position.
+    # Exact raw point.
     # -------------------------------------------------------------------------
 
     exact_indices = np.where(
@@ -414,7 +486,7 @@ def _interpolate_boundary_elevation(
         )
 
     # -------------------------------------------------------------------------
-    # Find the two surrounding raw points.
+    # Bracket with two surrounding raw points.
     # -------------------------------------------------------------------------
 
     right_index = int(
@@ -434,6 +506,7 @@ def _interpolate_boundary_elevation(
         left_index < 0
         or right_index >= len(distance)
     ):
+
         raise ValueError(
             f"Could not bracket normalized boundary "
             f"{boundary_distance_m:.2f} m."
@@ -464,14 +537,11 @@ def _interpolate_boundary_elevation(
     )
 
     if x1 <= x0:
+
         raise ValueError(
             "Invalid raw GPX distance interval during "
             "boundary interpolation."
         )
-
-    # -------------------------------------------------------------------------
-    # Linear interpolation.
-    # -------------------------------------------------------------------------
 
     fraction = (
         boundary_distance_m
@@ -492,28 +562,23 @@ def _interpolate_boundary_elevation(
 
 
 # =============================================================================
-# Normalized GPX elevation profile
+# Normalized elevation profile
 # =============================================================================
 
 def _build_normalized_elevation_profile(
     raw_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Build the normalized GPX elevation profile.
+    Create normalized GPX boundaries every GPX_SEGMENT_LENGTH_M.
 
-    Boundaries are determined exclusively by:
-
-        GPX_SEGMENT_LENGTH_M
-
-    Example with 100 m:
-
-        0
-        100
-        200
-        300
-        ...
+    Only elevation is interpolated.
     """
-    if raw_df is None or raw_df.empty:
+
+    if (
+        raw_df is None
+        or raw_df.empty
+    ):
+
         return pd.DataFrame()
 
     max_distance_m = float(
@@ -530,6 +595,7 @@ def _build_normalized_elevation_profile(
     )
 
     if n_complete_segments <= 0:
+
         return pd.DataFrame()
 
     boundary_distances = (
@@ -540,7 +606,9 @@ def _build_normalized_elevation_profile(
         * GPX_SEGMENT_LENGTH_M
     )
 
-    rows: list[dict[str, float]] = []
+    rows: list[
+        dict[str, float]
+    ] = []
 
     for boundary_distance_m in (
         boundary_distances
@@ -575,43 +643,35 @@ def _calculate_normalized_terrain(
     normalized_elevation_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Calculate all terrain quantities from the normalized elevation profile.
-
-    This is the current V0 terrain definition.
-
-    First:
-
-        normalized elevation
-
-    Then:
-
-        elevation change
-        ascent
-        descent
-        cumulative ascent
-        cumulative descent
-
-    Grade is independently calculated from the net elevation change.
+    Calculate ascent, descent, cumulative ascent, cumulative descent and grade
+    FROM THE NORMALIZED ELEVATION PROFILE.
     """
+
     if (
         normalized_elevation_df is None
         or normalized_elevation_df.empty
     ):
+
         return pd.DataFrame()
 
-    distance = normalized_elevation_df[
-        "distance_from_start_m"
-    ].to_numpy(
-        dtype=float
+    distance = (
+        normalized_elevation_df[
+            "distance_from_start_m"
+        ].to_numpy(
+            dtype=float
+        )
     )
 
-    elevation = normalized_elevation_df[
-        "elevation_m"
-    ].to_numpy(
-        dtype=float
+    elevation = (
+        normalized_elevation_df[
+            "elevation_m"
+        ].to_numpy(
+            dtype=float
+        )
     )
 
     if len(distance) < 2:
+
         return pd.DataFrame()
 
     delta_elevation = np.diff(
@@ -636,26 +696,38 @@ def _calculate_normalized_terrain(
         descent
     )
 
-    rows: list[dict[str, Any]] = []
+    rows: list[
+        dict[str, Any]
+    ] = []
 
     for index in range(
-        len(delta_elevation)
+        len(
+            delta_elevation
+        )
     ):
 
         start_distance = float(
-            distance[index]
+            distance[
+                index
+            ]
         )
 
         end_distance = float(
-            distance[index + 1]
+            distance[
+                index + 1
+            ]
         )
 
         start_elevation = float(
-            elevation[index]
+            elevation[
+                index
+            ]
         )
 
         end_elevation = float(
-            elevation[index + 1]
+            elevation[
+                index + 1
+            ]
         )
 
         grade_pct = (
@@ -669,7 +741,10 @@ def _calculate_normalized_terrain(
 
         rows.append(
             {
-                # Row represents the end of the segment.
+                # -------------------------------------------------------------
+                # The row represents the END of the segment.
+                # -------------------------------------------------------------
+
                 "distance_from_start_m": (
                     end_distance
                 ),
@@ -691,19 +766,27 @@ def _calculate_normalized_terrain(
                 ),
 
                 "ascent_m": float(
-                    ascent[index]
+                    ascent[
+                        index
+                    ]
                 ),
 
                 "descent_m": float(
-                    descent[index]
+                    descent[
+                        index
+                    ]
                 ),
 
                 "cumulative_ascent_m": float(
-                    cumulative_ascent[index]
+                    cumulative_ascent[
+                        index
+                    ]
                 ),
 
                 "cumulative_descent_m": float(
-                    cumulative_descent[index]
+                    cumulative_descent[
+                        index
+                    ]
                 ),
 
                 "grade_pct": float(
@@ -724,19 +807,30 @@ def _calculate_normalized_terrain(
 def add_aid_stations(
     profile_df: pd.DataFrame,
     aid_stations: list[
-        dict[str, Any]
-    ] | None = None,
+        AidStation
+        | dict[str, Any]
+    ]
+    | None = None,
 ) -> pd.DataFrame:
     """
     Attach aid-station metadata to the nearest normalized GPX endpoint.
 
-    Stop duration is stored but not applied here.
-    The simulator applies the stop.
+    Accepts BOTH:
+
+        AidStation objects
+        dictionaries
+
+    The operational application uses AidStation objects.
+
+    Stop duration is only stored here.
+    The simulator applies the stop to the elapsed clocks.
     """
+
     if (
         profile_df is None
         or profile_df.empty
     ):
+
         return pd.DataFrame()
 
     result = profile_df.copy()
@@ -749,48 +843,78 @@ def add_aid_stations(
         "aid_station_stop_min"
     ] = np.nan
 
-    if not aid_stations:
+    result[
+        "aid_station_distance_m"
+    ] = np.nan
+
+    # -------------------------------------------------------------------------
+    # Normalize the public input interface.
+    # -------------------------------------------------------------------------
+
+    stations = normalize_aid_stations(
+        aid_stations
+    )
+
+    if not stations:
+
         return result
 
-    distances = result[
-        "distance_from_start_m"
-    ].to_numpy(
+    profile_distances = pd.to_numeric(
+        result[
+            "distance_from_start_m"
+        ],
+        errors="coerce",
+    ).to_numpy(
         dtype=float
     )
 
-    for station in aid_stations:
+    if not np.isfinite(
+        profile_distances
+    ).all():
 
-        name = str(
-            station.get(
-                "name",
-                "",
-            )
+        raise ValueError(
+            "Profile contains invalid distances."
         )
 
-        station_distance = float(
-            station.get(
-                "distance_from_start_m",
-                np.nan,
-            )
-        )
+    race_distance_m = float(
+        profile_distances[-1]
+    )
 
-        stop_minutes = float(
-            station.get(
-                "stop_minutes",
-                0.0,
-            )
-        )
+    # -------------------------------------------------------------------------
+    # normalize_aid_stations() sorts and validates the stations.
+    #
+    # Validate against the actual normalized GPX course length here.
+    # -------------------------------------------------------------------------
 
-        if not np.isfinite(
-            station_distance
+    for station in stations:
+
+        if (
+            station.distance_from_start_m
+            > race_distance_m
         ):
-            continue
+
+            raise ValueError(
+                f"Aid station '{station.name}' at "
+                f"{station.distance_from_start_m:.1f} m is beyond "
+                f"the normalized GPX distance "
+                f"{race_distance_m:.1f} m."
+            )
+
+    # -------------------------------------------------------------------------
+    # Map each station to its nearest normalized endpoint.
+    # -------------------------------------------------------------------------
+
+    for station in stations:
+
+        station_distance_m = float(
+            station.distance_from_start_m
+        )
 
         nearest_index = int(
             np.argmin(
                 np.abs(
-                    distances
-                    - station_distance
+                    profile_distances
+                    - station_distance_m
                 )
             )
         )
@@ -798,15 +922,17 @@ def add_aid_stations(
         result.loc[
             nearest_index,
             "aid_station_name",
-        ] = name
+        ] = station.name
 
         result.loc[
             nearest_index,
             "aid_station_stop_min",
-        ] = max(
-            0.0,
-            stop_minutes,
-        )
+        ] = station.stop_minutes
+
+        result.loc[
+            nearest_index,
+            "aid_station_distance_m",
+        ] = station_distance_m
 
     return result
 
@@ -818,31 +944,35 @@ def add_aid_stations(
 def build_gpx_profile(
     uploaded_file,
     aid_stations: list[
-        dict[str, Any]
-    ] | None = None,
+        AidStation
+        | dict[str, Any]
+    ]
+    | None = None,
 ) -> pd.DataFrame:
     """
     Build the normalized GPX terrain profile.
 
-    Current V0:
+    Current V0 methodology:
 
         raw GPX
             ↓
         raw cumulative horizontal distance
             ↓
-        normalized positions every GPX_SEGMENT_LENGTH_M
+        boundaries every GPX_SEGMENT_LENGTH_M
             ↓
         linear interpolation of elevation ONLY
             ↓
         terrain calculated from normalized elevation
             ↓
-        normalized segment table
+        aid stations attached to normalized endpoints
     """
+
     raw_df = _prepare_raw_gpx(
         uploaded_file
     )
 
     if raw_df.empty:
+
         raise ValueError(
             "No usable GPX points were found."
         )
@@ -854,6 +984,7 @@ def build_gpx_profile(
     )
 
     if normalized_elevation_df.empty:
+
         raise ValueError(
             f"GPX is shorter than "
             f"{GPX_SEGMENT_LENGTH_M:.0f} m."
@@ -866,6 +997,7 @@ def build_gpx_profile(
     )
 
     if profile_df.empty:
+
         raise ValueError(
             "No normalized GPX segments were created."
         )
@@ -882,10 +1014,12 @@ def summarize_gpx_profile(
     """
     Return a compact normalized GPX summary.
     """
+
     if (
         profile_df is None
         or profile_df.empty
     ):
+
         return {
             "n_segments": 0,
             "distance_m": 0.0,
@@ -915,4 +1049,3 @@ def summarize_gpx_profile(
             ].iloc[-1]
         ),
     }
-    
