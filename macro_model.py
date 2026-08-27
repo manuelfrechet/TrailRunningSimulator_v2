@@ -6,59 +6,53 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from config import GPX_SEGMENT_LENGTH_M
 
-# -----------------------------------------------------------------------------
+
+# =============================================================================
 # V0 Macro model
-# -----------------------------------------------------------------------------
+# =============================================================================
 #
-# Objective:
+# Learn:
 #
-#   Learn:
+#     cumulative_elapsed_time
+#     =
+#     M(
+#         distance_from_start,
+#         cumulative_ascent,
+#         cumulative_descent
+#     )
 #
-#       cumulative_elapsed_time
-#       =
-#       M(
-#           distance_from_start,
-#           cumulative_ascent,
-#           cumulative_descent
-#       )
+# V0 basis:
 #
-# V0 model:
+#     linear terms
+#     quadratic terms
+#     pairwise interaction terms
 #
-#   - linear terms
-#   - quadratic terms
-#   - pairwise interaction terms
+# Physical constraint:
 #
-# IMPORTANT:
+#     M(0, 0, 0) = 0
 #
-#   The model is anchored at the physical race origin:
+# No free intercept.
 #
-#       M(0, 0, 0) = 0
-#
-#   This is enforced structurally.
-#
-#   There is NO free intercept.
-#
-#   Macro and micro remain completely independent.
-#
-# -----------------------------------------------------------------------------
+# Macro and micro remain independent.
+# =============================================================================
+
 
 RIDGE_LAMBDA = 1e-4
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Data container
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 @dataclass
 class MacroModel:
+
     feature_names: list[str]
 
-    # Scaling factors only.
-    #
-    # IMPORTANT:
-    # These are NOT means.
-    # Coordinates remain anchored at zero.
+    # Scaling only.
+    # Variables are NOT centered because the physical origin must remain zero.
     scales: pd.Series
 
     coefficients: np.ndarray
@@ -92,7 +86,7 @@ class MacroModel:
         """
         Predict cumulative elapsed time.
 
-        The returned function satisfies:
+        The fitted function satisfies:
 
             M(0, 0, 0) = 0
         """
@@ -116,56 +110,114 @@ class MacroModel:
             scales=self.scales,
         )
 
-        prediction = X @ self.coefficients
+        prediction = (
+            X
+            @ self.coefficients
+        )
 
         return np.asarray(
             prediction,
             dtype=float,
         )
 
-    def summary(self) -> dict[str, Any]:
+    def summary(
+        self,
+    ) -> dict[str, Any]:
+
         return {
-            "training_rows": self.training_rows,
-            "training_activities": self.training_activities,
-            "training_mae_s": self.training_mae_s,
-            "training_rmse_s": self.training_rmse_s,
-            "training_r2": self.training_r2,
-            "residual_median_s": self.residual_median_s,
-            "residual_q10_s": self.residual_q10_s,
-            "residual_q90_s": self.residual_q90_s,
-            "min_distance_m": self.min_distance_m,
-            "max_distance_m": self.max_distance_m,
-            "min_cumulative_ascent_m": self.min_cumulative_ascent_m,
-            "max_cumulative_ascent_m": self.max_cumulative_ascent_m,
-            "min_cumulative_descent_m": self.min_cumulative_descent_m,
-            "max_cumulative_descent_m": self.max_cumulative_descent_m,
-            "feature_names": list(self.feature_names),
+            "training_rows": (
+                self.training_rows
+            ),
+            "training_activities": (
+                self.training_activities
+            ),
+            "training_mae_s": (
+                self.training_mae_s
+            ),
+            "training_rmse_s": (
+                self.training_rmse_s
+            ),
+            "training_r2": (
+                self.training_r2
+            ),
+            "residual_median_s": (
+                self.residual_median_s
+            ),
+            "residual_q10_s": (
+                self.residual_q10_s
+            ),
+            "residual_q90_s": (
+                self.residual_q90_s
+            ),
+            "min_distance_m": (
+                self.min_distance_m
+            ),
+            "max_distance_m": (
+                self.max_distance_m
+            ),
+            "min_cumulative_ascent_m": (
+                self.min_cumulative_ascent_m
+            ),
+            "max_cumulative_ascent_m": (
+                self.max_cumulative_ascent_m
+            ),
+            "min_cumulative_descent_m": (
+                self.min_cumulative_descent_m
+            ),
+            "max_cumulative_descent_m": (
+                self.max_cumulative_descent_m
+            ),
+            "feature_names": list(
+                self.feature_names
+            ),
+            "gpx_segment_length_m": (
+                GPX_SEGMENT_LENGTH_M
+            ),
         }
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Helpers
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 def _safe_numeric_series(
     df: pd.DataFrame,
     column: str,
 ) -> pd.Series:
     """
-    Return a clean numeric 1D Series.
+    Return one clean numeric Series.
 
-    Handles duplicate-column edge cases defensively.
+    Duplicate-column cases are handled defensively.
     """
-    if df is None or df.empty:
+
+    if (
+        df is None
+        or df.empty
+    ):
+
         return pd.Series(
             dtype="float64",
-            index=df.index if df is not None else None,
+            index=(
+                df.index
+                if df is not None
+                else None
+            ),
         )
 
-    obj = df.loc[:, column]
+    obj = df.loc[
+        :,
+        column,
+    ]
 
-    if isinstance(obj, pd.DataFrame):
-        obj = obj.iloc[:, 0]
+    if isinstance(
+        obj,
+        pd.DataFrame,
+    ):
+
+        obj = obj.iloc[
+            :,
+            0,
+        ]
 
     return pd.to_numeric(
         obj,
@@ -179,19 +231,26 @@ def _prepare_macro_variables(
     """
     Extract the three canonical macro variables.
     """
+
     return pd.DataFrame(
         {
-            "distance_from_start_m": _safe_numeric_series(
-                frame,
-                "distance_from_start_m",
+            "distance_from_start_m": (
+                _safe_numeric_series(
+                    frame,
+                    "distance_from_start_m",
+                )
             ),
-            "cumulative_ascent_m": _safe_numeric_series(
-                frame,
-                "cumulative_ascent_m",
+            "cumulative_ascent_m": (
+                _safe_numeric_series(
+                    frame,
+                    "cumulative_ascent_m",
+                )
             ),
-            "cumulative_descent_m": _safe_numeric_series(
-                frame,
-                "cumulative_descent_m",
+            "cumulative_descent_m": (
+                _safe_numeric_series(
+                    frame,
+                    "cumulative_descent_m",
+                )
             ),
         }
     )
@@ -201,17 +260,17 @@ def _calculate_scales(
     variables: pd.DataFrame,
 ) -> pd.Series:
     """
-    Calculate characteristic scales for numerical conditioning.
+    Calculate numerical scales.
 
-    These are scales only; we deliberately do NOT center the variables.
+    Variables are deliberately NOT centered.
 
-    Therefore:
-        x = 0
-        a = 0
-        d = 0
+    Therefore the physical origin remains:
 
-    remains the origin after scaling.
+        distance = 0
+        ascent   = 0
+        descent  = 0
     """
+
     scales = variables.std(
         axis=0,
         skipna=True,
@@ -222,9 +281,10 @@ def _calculate_scales(
         1.0,
     )
 
-    scales = scales.fillna(1.0)
+    scales = scales.fillna(
+        1.0
+    )
 
-    # Avoid pathological tiny scales.
     scales = scales.clip(
         lower=1e-9,
     )
@@ -240,11 +300,16 @@ def _build_design_matrix(
     Build the anchored V0 macro basis.
 
     Variables:
+
         d
         A+
         A-
 
-    plus:
+    Terms:
+
+        d
+        A+
+        A-
         d²
         A+²
         A-²
@@ -252,55 +317,73 @@ def _build_design_matrix(
         d*A-
         A+*A-
 
-    All terms vanish at:
-        d = A+ = A- = 0
-
-    Therefore:
-        M(0,0,0) = 0
+    Every term is zero at the race origin.
     """
 
-    variables = _prepare_macro_variables(
-        frame
+    variables = (
+        _prepare_macro_variables(
+            frame
+        )
     )
 
-    variables = variables.fillna(0.0)
+    variables = (
+        variables.fillna(
+            0.0
+        )
+    )
 
     d = (
-        variables["distance_from_start_m"]
-        / float(scales["distance_from_start_m"])
+        variables[
+            "distance_from_start_m"
+        ]
+        / float(
+            scales[
+                "distance_from_start_m"
+            ]
+        )
     ).to_numpy(
         dtype=float
     )
 
-    a = (
-        variables["cumulative_ascent_m"]
-        / float(scales["cumulative_ascent_m"])
+    ascent = (
+        variables[
+            "cumulative_ascent_m"
+        ]
+        / float(
+            scales[
+                "cumulative_ascent_m"
+            ]
+        )
     ).to_numpy(
         dtype=float
     )
 
-    de = (
-        variables["cumulative_descent_m"]
-        / float(scales["cumulative_descent_m"])
+    descent = (
+        variables[
+            "cumulative_descent_m"
+        ]
+        / float(
+            scales[
+                "cumulative_descent_m"
+            ]
+        )
     ).to_numpy(
         dtype=float
     )
 
-    X = np.column_stack(
+    return np.column_stack(
         [
             d,
-            a,
-            de,
+            ascent,
+            descent,
             d * d,
-            a * a,
-            de * de,
-            d * a,
-            d * de,
-            a * de,
+            ascent * ascent,
+            descent * descent,
+            d * ascent,
+            d * descent,
+            ascent * descent,
         ]
     )
-
-    return X
 
 
 def _fit_ridge_without_intercept(
@@ -309,12 +392,13 @@ def _fit_ridge_without_intercept(
     ridge_lambda: float,
 ) -> np.ndarray:
     """
-    Ridge regression WITHOUT an intercept.
+    Ridge regression without an intercept.
 
-    This is deliberate because the mathematical model is constrained to:
+    This structurally enforces:
 
         M(0,0,0) = 0
     """
+
     if X.ndim != 2:
         raise ValueError(
             "Macro design matrix must be 2-dimensional."
@@ -330,19 +414,24 @@ def _fit_ridge_without_intercept(
             "Macro target vector is empty."
         )
 
-    n_features = X.shape[1]
+    n_features = (
+        X.shape[1]
+    )
 
     penalty = np.eye(
         n_features
     )
 
     lhs = (
-        X.T @ X
-        + ridge_lambda * penalty
+        X.T
+        @ X
+        + ridge_lambda
+        * penalty
     )
 
     rhs = (
-        X.T @ y
+        X.T
+        @ y
     )
 
     coefficients = np.linalg.solve(
@@ -358,10 +447,15 @@ def _fit_ridge_without_intercept(
 def _calculate_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-) -> tuple[float, float, float]:
+) -> tuple[
+    float,
+    float,
+    float,
+]:
     """
     Calculate MAE, RMSE and R².
     """
+
     residuals = (
         y_true
         - y_pred
@@ -369,7 +463,9 @@ def _calculate_metrics(
 
     mae = float(
         np.mean(
-            np.abs(residuals)
+            np.abs(
+                residuals
+            )
         )
     )
 
@@ -391,17 +487,23 @@ def _calculate_metrics(
         np.sum(
             (
                 y_true
-                - np.mean(y_true)
+                - np.mean(
+                    y_true
+                )
             ) ** 2
         )
     )
 
     if ss_tot > 0.0:
+
         r2 = float(
             1.0
-            - ss_res / ss_tot
+            - ss_res
+            / ss_tot
         )
+
     else:
+
         r2 = np.nan
 
     return (
@@ -411,15 +513,94 @@ def _calculate_metrics(
     )
 
 
-# -----------------------------------------------------------------------------
-# Public API
-# -----------------------------------------------------------------------------
+def _validate_profile_spacing(
+    profile_df: pd.DataFrame,
+) -> None:
+    """
+    Verify that a prediction profile follows the configured GPX segment
+    spacing.
+
+    This does NOT affect the macro mathematical model.
+
+    It exists only to prevent an accidental mismatch such as:
+        configuration = 100 m
+        supplied profile = 50 m rows
+    """
+
+    if (
+        profile_df is None
+        or profile_df.empty
+    ):
+        return
+
+    distance = pd.to_numeric(
+        profile_df[
+            "distance_from_start_m"
+        ],
+        errors="coerce",
+    ).to_numpy(
+        dtype=float
+    )
+
+    if len(distance) == 0:
+        return
+
+    if not np.isfinite(
+        distance
+    ).all():
+
+        raise ValueError(
+            "Profile contains invalid distance values."
+        )
+
+    # Rows represent segment endpoints.
+    # The first endpoint should therefore equal one configured segment.
+    expected_first = float(
+        GPX_SEGMENT_LENGTH_M
+    )
+
+    if not np.isclose(
+        distance[0],
+        expected_first,
+        atol=1e-6,
+        rtol=0.0,
+    ):
+
+        raise ValueError(
+            "Profile spacing does not match config.py. "
+            f"Expected first endpoint at "
+            f"{GPX_SEGMENT_LENGTH_M:.2f} m, "
+            f"found {distance[0]:.2f} m."
+        )
+
+    if len(distance) >= 2:
+
+        spacing = np.diff(
+            distance
+        )
+
+        if not np.allclose(
+            spacing,
+            GPX_SEGMENT_LENGTH_M,
+            atol=1e-6,
+            rtol=0.0,
+        ):
+
+            raise ValueError(
+                "Profile segment spacing does not match "
+                "GPX_SEGMENT_LENGTH_M from config.py."
+            )
+
+
+# =============================================================================
+# Fit macro model
+# =============================================================================
 
 def fit_macro_model(
     learning_df: pd.DataFrame,
 ) -> MacroModel:
     """
-    Fit the V0 macro model using the complete historical learning dataset.
+    Fit the V0 macro model using the complete historical learning corpus.
 
     Target:
         elapsed_time_s
@@ -433,7 +614,11 @@ def fit_macro_model(
         M(0,0,0) = 0
     """
 
-    if learning_df is None or learning_df.empty:
+    if (
+        learning_df is None
+        or learning_df.empty
+    ):
+
         raise ValueError(
             "Historical learning dataset is empty."
         )
@@ -452,18 +637,22 @@ def fit_macro_model(
     ]
 
     if missing:
+
         raise ValueError(
             "Macro model is missing required columns: "
-            + ", ".join(missing)
+            + ", ".join(
+                missing
+            )
         )
 
     df = learning_df.copy()
 
     # -------------------------------------------------------------------------
-    # Clean required columns
+    # Required numeric variables
     # -------------------------------------------------------------------------
 
     for column in required_columns:
+
         df[column] = pd.to_numeric(
             df[column],
             errors="coerce",
@@ -476,20 +665,25 @@ def fit_macro_model(
     )
 
     if len(df) < 10:
+
         raise ValueError(
             "Not enough historical rows to fit the macro model."
         )
 
     # -------------------------------------------------------------------------
-    # Historical variables
+    # Variables and numerical scales
     # -------------------------------------------------------------------------
 
-    variables = _prepare_macro_variables(
-        df
+    variables = (
+        _prepare_macro_variables(
+            df
+        )
     )
 
-    scales = _calculate_scales(
-        variables
+    scales = (
+        _calculate_scales(
+            variables
+        )
     )
 
     # -------------------------------------------------------------------------
@@ -508,24 +702,33 @@ def fit_macro_model(
     )
 
     # -------------------------------------------------------------------------
-    # Fit constrained model
+    # Fit
     # -------------------------------------------------------------------------
 
-    coefficients = _fit_ridge_without_intercept(
-        X=X,
-        y=y,
-        ridge_lambda=RIDGE_LAMBDA,
+    coefficients = (
+        _fit_ridge_without_intercept(
+            X=X,
+            y=y,
+            ridge_lambda=(
+                RIDGE_LAMBDA
+            ),
+        )
     )
 
     # -------------------------------------------------------------------------
-    # Training predictions
+    # Training diagnostics
     # -------------------------------------------------------------------------
 
     y_pred = (
-        X @ coefficients
+        X
+        @ coefficients
     )
 
-    mae, rmse, r2 = _calculate_metrics(
+    (
+        mae,
+        rmse,
+        r2,
+    ) = _calculate_metrics(
         y_true=y,
         y_pred=y_pred,
     )
@@ -555,15 +758,16 @@ def fit_macro_model(
         )
     )
 
-    # -------------------------------------------------------------------------
-    # Dataset metadata
-    # -------------------------------------------------------------------------
-
     if "activity_id" in df.columns:
+
         training_activities = int(
-            df["activity_id"].nunique()
+            df[
+                "activity_id"
+            ].nunique()
         )
+
     else:
+
         training_activities = 0
 
     feature_names = [
@@ -579,19 +783,41 @@ def fit_macro_model(
     ]
 
     return MacroModel(
-        feature_names=feature_names,
-        scales=scales,
-        coefficients=coefficients,
-        residual_median_s=residual_median,
-        residual_q10_s=residual_q10,
-        residual_q90_s=residual_q90,
-        training_rows=int(
-            len(df)
+        feature_names=(
+            feature_names
         ),
-        training_activities=training_activities,
-        training_mae_s=mae,
-        training_rmse_s=rmse,
-        training_r2=r2,
+        scales=(
+            scales
+        ),
+        coefficients=(
+            coefficients
+        ),
+        residual_median_s=(
+            residual_median
+        ),
+        residual_q10_s=(
+            residual_q10
+        ),
+        residual_q90_s=(
+            residual_q90
+        ),
+        training_rows=int(
+            len(
+                df
+            )
+        ),
+        training_activities=(
+            training_activities
+        ),
+        training_mae_s=(
+            mae
+        ),
+        training_rmse_s=(
+            rmse
+        ),
+        training_r2=(
+            r2
+        ),
         min_distance_m=float(
             df[
                 "distance_from_start_m"
@@ -625,6 +851,10 @@ def fit_macro_model(
     )
 
 
+# =============================================================================
+# Prediction API
+# =============================================================================
+
 def predict_macro_cumulative_time(
     model: MacroModel,
     distance_from_start_m: Any,
@@ -634,18 +864,24 @@ def predict_macro_cumulative_time(
     """
     Predict cumulative elapsed time.
     """
+
     if model is None:
+
         raise ValueError(
             "Macro model is None."
         )
 
-    prediction = model.predict_cumulative_time(
-        distance_from_start_m=distance_from_start_m,
-        cumulative_ascent_m=cumulative_ascent_m,
-        cumulative_descent_m=cumulative_descent_m,
+    return model.predict_cumulative_time(
+        distance_from_start_m=(
+            distance_from_start_m
+        ),
+        cumulative_ascent_m=(
+            cumulative_ascent_m
+        ),
+        cumulative_descent_m=(
+            cumulative_descent_m
+        ),
     )
-
-    return prediction
 
 
 def predict_macro_profile(
@@ -653,21 +889,35 @@ def predict_macro_profile(
     profile_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Add independent macro predictions to a profile.
+    Add independent macro predictions to a normalized GPX profile.
 
-    The input profile must contain cumulative ascent/descent and distance.
+    The profile rows represent segment endpoints.
 
-    Macro prediction is cumulative time.
+    Macro cumulative prediction:
 
-    Segment macro time is then the difference between consecutive cumulative
-    predictions.
+        M(distance, cumulative ascent, cumulative descent)
+
+    Segment time:
+
+        M(current endpoint)
+        -
+        M(previous endpoint)
+
+    Because M(0,0,0)=0, the first segment is simply the first cumulative
+    prediction.
     """
+
     if model is None:
+
         raise ValueError(
             "Macro model is None."
         )
 
-    if profile_df is None or profile_df.empty:
+    if (
+        profile_df is None
+        or profile_df.empty
+    ):
+
         return pd.DataFrame()
 
     required_columns = [
@@ -683,24 +933,44 @@ def predict_macro_profile(
     ]
 
     if missing:
+
         raise ValueError(
             "Profile is missing required macro columns: "
-            + ", ".join(missing)
+            + ", ".join(
+                missing
+            )
         )
 
-    result = profile_df.copy()
+    # -------------------------------------------------------------------------
+    # Explicitly ensure that GPX normalization and model prediction are using
+    # the same project configuration.
+    # -------------------------------------------------------------------------
+
+    _validate_profile_spacing(
+        profile_df
+    )
+
+    result = (
+        profile_df.copy()
+    )
 
     cumulative_prediction = (
         model.predict_cumulative_time(
-            distance_from_start_m=result[
-                "distance_from_start_m"
-            ],
-            cumulative_ascent_m=result[
-                "cumulative_ascent_m"
-            ],
-            cumulative_descent_m=result[
-                "cumulative_descent_m"
-            ],
+            distance_from_start_m=(
+                result[
+                    "distance_from_start_m"
+                ]
+            ),
+            cumulative_ascent_m=(
+                result[
+                    "cumulative_ascent_m"
+                ]
+            ),
+            cumulative_descent_m=(
+                result[
+                    "cumulative_descent_m"
+                ]
+            ),
         )
     )
 
@@ -708,33 +978,17 @@ def predict_macro_profile(
         "macro_predicted_cumulative_time_s"
     ] = cumulative_prediction
 
-    # -------------------------------------------------------------------------
-    # Macro segment duration.
-    #
-    # Each output row represents the END of a segment.
-    #
-    # Therefore:
-    #
-    #   segment k =
-    #   cumulative_time(k) - cumulative_time(k-1)
-    #
-    # For the first row, the model is anchored at zero.
-    # -------------------------------------------------------------------------
-
     cumulative = result[
         "macro_predicted_cumulative_time_s"
     ].to_numpy(
         dtype=float
     )
 
-    segment_time = np.diff(
+    result[
+        "macro_predicted_time_s"
+    ] = np.diff(
         cumulative,
         prepend=0.0,
     )
 
-    result[
-        "macro_predicted_time_s"
-    ] = segment_time
-
     return result
-    
