@@ -293,24 +293,33 @@ def _predict_macro_segment(
         )
     )
 
-    segment_time = float(
+    raw_segment_time = float(
         end_prediction[0]
         - start_prediction[0]
     )
-
+    
     if not np.isfinite(
-        segment_time
+        raw_segment_time
     ):
         raise ValueError(
             "Macro model returned an invalid segment time."
         )
-
-    if segment_time < 0.0:
-        raise ValueError(
-            "Macro model returned a negative segment time "
-            f"at distance {float(end_row['distance_from_start_m']):.2f} m."
-        )
-
+    
+    # -------------------------------------------------------------------------
+    # Physical constraint:
+    #
+    # A race clock cannot move backwards.
+    #
+    # The unconstrained polynomial macro approximation can occasionally produce
+    # a small negative increment even though both cumulative predictions are
+    # positive. For V0, project that increment onto the physically valid domain.
+    # -------------------------------------------------------------------------
+    
+    segment_time = max(
+        raw_segment_time,
+        0.0,
+    )
+    
     return segment_time
 
 
