@@ -7,6 +7,10 @@ from config import (
     LEARNING_STEP_M,
 )
 
+from diagnostics import (
+    build_simulation_diagnostics,
+)
+
 from fit_learning import (
     build_learning_dataset,
     summarize_learning_dataset,
@@ -36,12 +40,12 @@ from simulator import (
 # =============================================================================
 
 st.set_page_config(
-    page_title="Trail Running Simulator V2",
+    page_title="Trail Running Simulator V0",
     layout="wide",
 )
 
 st.title(
-    "Trail Running Simulator V2"
+    "Trail Running Simulator V0"
 )
 
 
@@ -58,6 +62,7 @@ DEFAULT_STATE = {
     "gpx_profile_df": None,
     "simulation_df": None,
     "race_summary": None,
+    "simulation_diagnostics": None,
     "fit_signature": None,
     "gpx_signature": None,
 }
@@ -69,13 +74,13 @@ for key, value in DEFAULT_STATE.items():
 
 
 # =============================================================================
-# Current project configuration
+# Project configuration
 # =============================================================================
 
 st.info(
     f"FIT learning step: "
     f"{LEARNING_STEP_M:.0f} m  |  "
-    f"GPX / transition / simulation segment: "
+    f"GPX / historical transition / simulation segment: "
     f"{GPX_SEGMENT_LENGTH_M:.0f} m"
 )
 
@@ -97,7 +102,7 @@ uploaded_fit_files = st.file_uploader(
 
 
 # -----------------------------------------------------------------------------
-# Detect change in FIT selection
+# FIT signature
 # -----------------------------------------------------------------------------
 
 def _build_fit_signature(
@@ -162,6 +167,10 @@ if (
 
     st.session_state[
         "race_summary"
+    ] = None
+
+    st.session_state[
+        "simulation_diagnostics"
     ] = None
 
 
@@ -239,7 +248,6 @@ if uploaded_fit_files:
                     "micro_model"
                 ] = micro_model
 
-                # New historical learning invalidates a previous simulation.
                 st.session_state[
                     "simulation_df"
                 ] = None
@@ -248,9 +256,13 @@ if uploaded_fit_files:
                     "race_summary"
                 ] = None
 
+                st.session_state[
+                    "simulation_diagnostics"
+                ] = None
+
                 st.success(
-                    "Historical learning, macro model and micro model "
-                    "completed successfully."
+                    "Historical learning, macro model and "
+                    "micro model completed successfully."
                 )
 
         except Exception as exc:
@@ -364,7 +376,7 @@ if (
 
 
 # =============================================================================
-# Macro / Micro model summaries
+# Macro model summary
 # =============================================================================
 
 if macro_model is not None:
@@ -400,6 +412,10 @@ if macro_model is not None:
             f"{macro_summary['training_r2']:.4f}",
         )
 
+
+# =============================================================================
+# Micro model summary
+# =============================================================================
 
 if micro_model is not None:
 
@@ -457,7 +473,7 @@ uploaded_gpx_file = st.file_uploader(
 
 
 # -----------------------------------------------------------------------------
-# Detect GPX change
+# GPX signature
 # -----------------------------------------------------------------------------
 
 def _build_gpx_signature(
@@ -511,6 +527,10 @@ if (
 
     st.session_state[
         "race_summary"
+    ] = None
+
+    st.session_state[
+        "simulation_diagnostics"
     ] = None
 
 
@@ -598,7 +618,7 @@ if (
 
 
 # =============================================================================
-# Build normalized GPX profile
+# Build normalized GPX
 # =============================================================================
 
 if uploaded_gpx_file is not None:
@@ -632,6 +652,10 @@ if uploaded_gpx_file is not None:
 
             st.session_state[
                 "race_summary"
+            ] = None
+
+            st.session_state[
+                "simulation_diagnostics"
             ] = None
 
             st.success(
@@ -783,18 +807,19 @@ else:
                 "Simulating race..."
             ):
 
-                simulation_df, race_summary = (
-                    simulate_race(
-                        gpx_profile_df=(
-                            gpx_profile_df
-                        ),
-                        macro_model=(
-                            macro_model
-                        ),
-                        micro_model=(
-                            micro_model
-                        ),
-                    )
+                (
+                    simulation_df,
+                    race_summary,
+                ) = simulate_race(
+                    gpx_profile_df=(
+                        gpx_profile_df
+                    ),
+                    macro_model=(
+                        macro_model
+                    ),
+                    micro_model=(
+                        micro_model
+                    ),
                 )
 
             st.session_state[
@@ -804,6 +829,26 @@ else:
             st.session_state[
                 "race_summary"
             ] = race_summary
+
+            # -----------------------------------------------------------------
+            # Diagnostics are calculated only after an explicit simulation run.
+            #
+            # This keeps diagnostics outside the operational simulator.
+            # -----------------------------------------------------------------
+
+            with st.spinner(
+                "Building simulation diagnostics..."
+            ):
+
+                simulation_diagnostics = (
+                    build_simulation_diagnostics(
+                        simulation_df
+                    )
+                )
+
+            st.session_state[
+                "simulation_diagnostics"
+            ] = simulation_diagnostics
 
             st.success(
                 "Simulation completed."
@@ -828,6 +873,10 @@ simulation_df = st.session_state[
 
 race_summary = st.session_state[
     "race_summary"
+]
+
+simulation_diagnostics = st.session_state[
+    "simulation_diagnostics"
 ]
 
 
@@ -897,24 +946,213 @@ if (
             f"{race_summary['segments']:,}",
         )
 
+    # -------------------------------------------------------------------------
+    # Macro clipping
+    # -------------------------------------------------------------------------
+
     st.subheader(
-        "Simulation detail"
+        "Macro physical constraint"
     )
 
-    st.dataframe(
-        simulation_df.head(500),
-        width="stretch",
+    col7, col8 = st.columns(2)
+
+    with col7:
+
+        st.metric(
+            "Clipped segments",
+            race_summary[
+                "macro_clipped_segments"
+            ],
+        )
+
+    with col8:
+
+        st.metric(
+            "Clipped time",
+            (
+                f"{race_summary['macro_clipped_minutes']:.2f} min"
+            ),
+        )
+
+    # -------------------------------------------------------------------------
+    # Simulation detail
+    # -------------------------------------------------------------------------
+
+    with st.expander(
+        "Simulation detail",
+        expanded=False,
+    ):
+
+        st.dataframe(
+            simulation_df.head(500),
+            width="stretch",
+        )
+
+        st.download_button(
+            "Download complete simulation",
+            data=simulation_df.to_csv(
+                index=False
+            ),
+            file_name=(
+                "simulation_results.csv"
+            ),
+            mime="text/csv",
+            key="download_simulation",
+        )
+
+
+# =============================================================================
+# 4. TEMPORARY DIAGNOSTICS
+# =============================================================================
+#
+# Everything below this point is disposable.
+#
+# It is deliberately implemented through diagnostics.py rather than inside
+# the operational simulator.
+# =============================================================================
+
+if (
+    simulation_diagnostics is not None
+):
+
+    st.divider()
+
+    st.header(
+        "Diagnostics"
     )
 
-    st.download_button(
-        "Download complete simulation",
-        data=simulation_df.to_csv(
-            index=False
-        ),
-        file_name=(
-            "simulation_results.csv"
-        ),
-        mime="text/csv",
-        key="download_simulation",
+    # -------------------------------------------------------------------------
+    # Cumulative macro vs micro
+    # -------------------------------------------------------------------------
+
+    divergence_df = (
+        simulation_diagnostics.get(
+            "simulation_divergence"
+        )
     )
-    
+
+    if (
+        divergence_df is not None
+        and not divergence_df.empty
+    ):
+
+        st.subheader(
+            "Cumulative macro vs micro"
+        )
+
+        chart_df = divergence_df[
+            [
+                "distance_km",
+                "macro_cumulative_time_h",
+                "micro_cumulative_time_h",
+            ]
+        ].copy()
+
+        st.line_chart(
+            chart_df.set_index(
+                "distance_km"
+            )
+        )
+
+        divergence_chart_df = (
+            divergence_df[
+                [
+                    "distance_km",
+                    "micro_minus_macro_cumulative_min",
+                ]
+            ]
+            .copy()
+            .set_index(
+                "distance_km"
+            )
+        )
+
+        st.subheader(
+            "Micro minus macro cumulative difference"
+        )
+
+        st.line_chart(
+            divergence_chart_df
+        )
+
+    # -------------------------------------------------------------------------
+    # Checkpoints
+    # -------------------------------------------------------------------------
+
+    checkpoints_df = (
+        simulation_diagnostics.get(
+            "simulation_checkpoints"
+        )
+    )
+
+    if (
+        checkpoints_df is not None
+        and not checkpoints_df.empty
+    ):
+
+        st.subheader(
+            "Prediction divergence checkpoints"
+        )
+
+        st.dataframe(
+            checkpoints_df,
+            width="stretch",
+        )
+
+    # -------------------------------------------------------------------------
+    # Course sections
+    # -------------------------------------------------------------------------
+
+    sections_df = (
+        simulation_diagnostics.get(
+            "simulation_sections"
+        )
+    )
+
+    if (
+        sections_df is not None
+        and not sections_df.empty
+    ):
+
+        st.subheader(
+            "Prediction divergence by course section"
+        )
+
+        st.dataframe(
+            sections_df,
+            width="stretch",
+        )
+
+    # -------------------------------------------------------------------------
+    # Macro clipping diagnostics
+    # -------------------------------------------------------------------------
+
+    clipping_df = (
+        simulation_diagnostics.get(
+            "macro_clipping"
+        )
+    )
+
+    if (
+        clipping_df is not None
+        and not clipping_df.empty
+    ):
+
+        st.subheader(
+            "Macro clipped segments"
+        )
+
+        st.dataframe(
+            clipping_df,
+            width="stretch",
+        )
+
+    elif (
+        clipping_df is not None
+        and clipping_df.empty
+    ):
+
+        st.success(
+            "No macro negative-duration segments were clipped."
+        )
+        
