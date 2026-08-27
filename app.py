@@ -670,14 +670,12 @@ st.write(
 
 
 # -----------------------------------------------------------------------------
-# Convert the persistent AidStation objects into editor rows.
+# Current SAVED aid-station state
 # -----------------------------------------------------------------------------
 
-current_aid_stations = (
-    st.session_state[
-        "aid_stations"
-    ]
-)
+current_aid_stations = st.session_state[
+    "aid_stations"
+]
 
 editor_rows = [
     {
@@ -693,55 +691,72 @@ editor_rows = [
 
 
 # -----------------------------------------------------------------------------
-# Streamlit editor
+# Aid-station form
+#
+# IMPORTANT:
+#
+# Streamlit reruns the script when the user interacts with a widget.
+#
+# The form prevents those edits from being committed to the application state
+# until the user explicitly presses "Save aid stations".
 # -----------------------------------------------------------------------------
 
-aid_station_editor_df = st.data_editor(
-    pd.DataFrame(
-        editor_rows,
-        columns=[
-            "name",
-            "distance_km",
-            "stop_minutes",
-        ],
-    ),
-    num_rows="dynamic",
-    width="stretch",
-    hide_index=True,
-    column_config={
-        "name": st.column_config.TextColumn(
-            "Aid station",
-            help="Station name",
+with st.form(
+    "aid_station_form",
+    clear_on_submit=False,
+):
+
+    aid_station_editor_df = st.data_editor(
+        pd.DataFrame(
+            editor_rows,
+            columns=[
+                "name",
+                "distance_km",
+                "stop_minutes",
+            ],
         ),
-        "distance_km": st.column_config.NumberColumn(
-            "Distance (km)",
-            min_value=0.0,
-            step=0.1,
-            format="%.1f",
-        ),
-        "stop_minutes": st.column_config.NumberColumn(
-            "Expected stop (min)",
-            min_value=0.0,
-            step=1.0,
-            format="%.0f",
-        ),
-    },
-    key="aid_station_editor",
-)
+        num_rows="dynamic",
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "name": st.column_config.TextColumn(
+                "Aid station",
+                help="Station name",
+            ),
+            "distance_km": st.column_config.NumberColumn(
+                "Distance (km)",
+                min_value=0.0,
+                step=0.1,
+                format="%.1f",
+            ),
+            "stop_minutes": st.column_config.NumberColumn(
+                "Expected stop (min)",
+                min_value=0.0,
+                step=1.0,
+                format="%.0f",
+            ),
+        },
+        key="aid_station_editor",
+    )
+
+    save_aid_stations = st.form_submit_button(
+        "Save aid stations",
+        type="primary",
+    )
 
 
 # -----------------------------------------------------------------------------
-# Normalize editor output
+# Editor conversion helpers
 # -----------------------------------------------------------------------------
 
 def _editor_to_dataframe(
     editor_value,
 ) -> pd.DataFrame:
     """
-    Convert Streamlit data-editor output into a DataFrame.
+    Convert editor output into a DataFrame.
 
-    This is deliberately defensive because the editor may return different
-    structures depending on the input type and Streamlit state.
+    The normal Streamlit data-editor output is a DataFrame, but this helper
+    remains defensive so that state changes cannot cause a type error.
     """
 
     if editor_value is None:
@@ -799,7 +814,7 @@ def _read_aid_station_editor(
     editor_value,
 ) -> list[AidStation]:
     """
-    Convert editor rows into validated AidStation objects.
+    Convert submitted editor rows into validated AidStation objects.
     """
 
     editor_df = _editor_to_dataframe(
@@ -810,17 +825,17 @@ def _read_aid_station_editor(
 
         return []
 
-    required_columns = [
+    for column in [
         "name",
         "distance_km",
         "stop_minutes",
-    ]
-
-    for column in required_columns:
+    ]:
 
         if column not in editor_df.columns:
 
-            editor_df[column] = None
+            editor_df[
+                column
+            ] = None
 
     stations: list[
         AidStation
@@ -840,13 +855,11 @@ def _read_aid_station_editor(
             "stop_minutes"
         )
 
-        # ---------------------------------------------------------------------
-        # Ignore completely empty rows created by "Add row".
-        # ---------------------------------------------------------------------
-
         name_empty = (
             name_value is None
-            or pd.isna(name_value)
+            or pd.isna(
+                name_value
+            )
             or str(
                 name_value
             ).strip() == ""
@@ -854,14 +867,19 @@ def _read_aid_station_editor(
 
         distance_empty = (
             distance_value is None
-            or pd.isna(distance_value)
+            or pd.isna(
+                distance_value
+            )
         )
 
         stop_empty = (
             stop_value is None
-            or pd.isna(stop_value)
+            or pd.isna(
+                stop_value
+            )
         )
 
+        # Completely empty rows are allowed.
         if (
             name_empty
             and distance_empty
@@ -869,10 +887,7 @@ def _read_aid_station_editor(
         ):
             continue
 
-        # ---------------------------------------------------------------------
-        # Partial rows are invalid.
-        # ---------------------------------------------------------------------
-
+        # Partially completed rows are not allowed.
         if (
             name_empty
             or distance_empty
@@ -884,27 +899,19 @@ def _read_aid_station_editor(
                 "a name, distance and expected stop duration."
             )
 
-        name = str(
-            name_value
-        ).strip()
-
-        distance_km = float(
-            distance_value
-        )
-
-        stop_minutes = float(
-            stop_value
-        )
-
         stations.append(
             AidStation(
-                name=name,
+                name=str(
+                    name_value
+                ).strip(),
                 distance_from_start_m=(
-                    distance_km
+                    float(
+                        distance_value
+                    )
                     * 1000.0
                 ),
-                stop_minutes=(
-                    stop_minutes
+                stop_minutes=float(
+                    stop_value
                 ),
             )
         )
@@ -915,102 +922,113 @@ def _read_aid_station_editor(
 
 
 # -----------------------------------------------------------------------------
-# Persist validated stations.
+# Save button action
+#
+# IMPORTANT:
+# This is the ONLY place where edited aid-station values are committed.
 # -----------------------------------------------------------------------------
 
-try:
+if save_aid_stations:
 
-    edited_aid_stations = (
-        _read_aid_station_editor(
-            aid_station_editor_df
-        )
-    )
+    try:
 
-    # -------------------------------------------------------------------------
-    # If the user changed the table, any previously built GPX profile is no
-    # longer guaranteed to contain the current station configuration.
-    # -------------------------------------------------------------------------
-
-    old_station_signature = tuple(
-        (
-            station.name,
-            station.distance_from_start_m,
-            station.stop_minutes,
-        )
-        for station in current_aid_stations
-    )
-
-    new_station_signature = tuple(
-        (
-            station.name,
-            station.distance_from_start_m,
-            station.stop_minutes,
-        )
-        for station in edited_aid_stations
-    )
-
-    if (
-        old_station_signature
-        != new_station_signature
-    ):
-
-        st.session_state[
-            "aid_stations"
-        ] = edited_aid_stations
-
-        # Current GPX profile contains the previous station mapping.
-        st.session_state[
-            "gpx_profile_df"
-        ] = None
-
-        st.session_state[
-            "simulation_df"
-        ] = None
-
-        st.session_state[
-            "race_summary"
-        ] = None
-
-        st.session_state[
-            "simulation_diagnostics"
-        ] = None
-
-    else:
-
-        st.session_state[
-            "aid_stations"
-        ] = edited_aid_stations
-
-    if edited_aid_stations:
-
-        aid_summary = (
-            summarize_aid_stations(
-                edited_aid_stations
+        new_aid_stations = (
+            _read_aid_station_editor(
+                aid_station_editor_df
             )
         )
 
-        total_stop_minutes = float(
-            aid_summary[
-                "stop_minutes"
-            ].sum()
+        old_signature = tuple(
+            (
+                station.name,
+                station.distance_from_start_m,
+                station.stop_minutes,
+            )
+            for station in current_aid_stations
         )
 
-        st.caption(
-            f"{len(edited_aid_stations)} aid station(s) | "
-            f"Total expected stationary time: "
-            f"{total_stop_minutes:.0f} min"
+        new_signature = tuple(
+            (
+                station.name,
+                station.distance_from_start_m,
+                station.stop_minutes,
+            )
+            for station in new_aid_stations
         )
 
-    else:
+        st.session_state[
+            "aid_stations"
+        ] = new_aid_stations
 
-        st.caption(
-            "No aid stations entered."
+        # ---------------------------------------------------------------------
+        # Changing the saved aid-station configuration invalidates the
+        # normalized GPX profile because the profile contains the station
+        # mapping.
+        # ---------------------------------------------------------------------
+
+        if old_signature != new_signature:
+
+            st.session_state[
+                "gpx_profile_df"
+            ] = None
+
+            st.session_state[
+                "simulation_df"
+            ] = None
+
+            st.session_state[
+                "race_summary"
+            ] = None
+
+            st.session_state[
+                "simulation_diagnostics"
+            ] = None
+
+        st.success(
+            "Aid stations saved."
         )
 
-except Exception as exc:
+    except Exception as exc:
 
-    st.error(
-        f"Aid-station input error: {exc}"
+        st.error(
+            f"Aid-station input error: {exc}"
+        )
+
+
+# =============================================================================
+# Saved aid-station summary
+# =============================================================================
+
+saved_aid_stations = (
+    st.session_state[
+        "aid_stations"
+    ]
+)
+
+if saved_aid_stations:
+
+    aid_summary = (
+        summarize_aid_stations(
+            saved_aid_stations
+        )
+    )
+
+    total_stop_minutes = float(
+        aid_summary[
+            "stop_minutes"
+        ].sum()
+    )
+
+    st.caption(
+        f"{len(saved_aid_stations)} aid station(s) saved | "
+        f"Total expected stationary time: "
+        f"{total_stop_minutes:.0f} min"
+    )
+
+else:
+
+    st.caption(
+        "No aid stations saved."
     )
 
 
@@ -1028,9 +1046,11 @@ if uploaded_gpx_file is not None:
 
         try:
 
-            aid_stations = st.session_state[
-                "aid_stations"
-            ]
+            aid_stations = (
+                st.session_state[
+                    "aid_stations"
+                ]
+            )
 
             with st.spinner(
                 "Building normalized GPX profile..."
@@ -1233,6 +1253,10 @@ else:
                 "race_summary"
             ] = race_summary
 
+            # -----------------------------------------------------------------
+            # Diagnostics are deliberately separate from simulation.
+            # -----------------------------------------------------------------
+
             with st.spinner(
                 "Building simulation diagnostics..."
             ):
@@ -1261,7 +1285,7 @@ else:
 
 
 # =============================================================================
-# Simulation results
+# Retrieve simulation state
 # =============================================================================
 
 simulation_df = st.session_state[
@@ -1276,6 +1300,10 @@ simulation_diagnostics = st.session_state[
     "simulation_diagnostics"
 ]
 
+
+# =============================================================================
+# Simulation results
+# =============================================================================
 
 if (
     simulation_df is not None
@@ -1325,7 +1353,7 @@ if (
         )
 
     # -------------------------------------------------------------------------
-    # Additional race information
+    # Secondary summary
     # -------------------------------------------------------------------------
 
     col4, col5, col6 = st.columns(3)
@@ -1406,34 +1434,46 @@ if (
 
         display_aid_summary[
             "macro_arrival"
-        ] = display_aid_summary[
-            "macro_arrival_time_s"
-        ].map(
-            format_seconds
+        ] = (
+            display_aid_summary[
+                "macro_arrival_time_s"
+            ]
+            .map(
+                format_seconds
+            )
         )
 
         display_aid_summary[
             "micro_arrival"
-        ] = display_aid_summary[
-            "micro_arrival_time_s"
-        ].map(
-            format_seconds
+        ] = (
+            display_aid_summary[
+                "micro_arrival_time_s"
+            ]
+            .map(
+                format_seconds
+            )
         )
 
         display_aid_summary[
             "macro_departure"
-        ] = display_aid_summary[
-            "macro_departure_time_s"
-        ].map(
-            format_seconds
+        ] = (
+            display_aid_summary[
+                "macro_departure_time_s"
+            ]
+            .map(
+                format_seconds
+            )
         )
 
         display_aid_summary[
             "micro_departure"
-        ] = display_aid_summary[
-            "micro_departure_time_s"
-        ].map(
-            format_seconds
+        ] = (
+            display_aid_summary[
+                "micro_departure_time_s"
+            ]
+            .map(
+                format_seconds
+            )
         )
 
         st.dataframe(
@@ -1514,7 +1554,7 @@ if (
 #
 # Everything below this point is disposable.
 #
-# Diagnostic calculations live in diagnostics.py.
+# Calculations live in diagnostics.py.
 # app.py only displays their outputs.
 # =============================================================================
 
