@@ -6,6 +6,8 @@ import fitdecode
 import numpy as np
 import pandas as pd
 
+from config import GPX_SEGMENT_LENGTH_M
+
 
 # =============================================================================
 # Diagnostics configuration
@@ -16,7 +18,6 @@ EXTREME_SAMPLE_SIZE = 20
 RANDOM_STATE = 42
 
 DISTANCE_TOLERANCE_M = 0.01
-PREDICTION_SEGMENT_LENGTH_M = 50.0
 
 
 # =============================================================================
@@ -44,6 +45,7 @@ def build_learning_diagnostic_sample(
     )
 
     first_rows = df.head(100).copy()
+
     first_rows.insert(
         0,
         "diagnostic_group",
@@ -51,7 +53,10 @@ def build_learning_diagnostic_sample(
     )
 
     random_rows = df.sample(
-        n=min(random_sample_size, len(df)),
+        n=min(
+            random_sample_size,
+            len(df),
+        ),
         random_state=RANDOM_STATE,
     ).copy()
 
@@ -67,7 +72,9 @@ def build_learning_diagnostic_sample(
             ascending=False,
             kind="mergesort",
         )
-        .head(extreme_sample_size)
+        .head(
+            extreme_sample_size
+        )
         .copy()
     )
 
@@ -83,7 +90,9 @@ def build_learning_diagnostic_sample(
             ascending=True,
             kind="mergesort",
         )
-        .head(extreme_sample_size)
+        .head(
+            extreme_sample_size
+        )
         .copy()
     )
 
@@ -118,7 +127,8 @@ def build_activity_learning_summary(
     ]
 
     missing = [
-        col for col in required
+        col
+        for col in required
         if col not in learning_df.columns
     ]
 
@@ -142,10 +152,17 @@ def build_activity_learning_summary(
 
     rows: list[dict[str, Any]] = []
 
-    for (activity_id, activity_name), group in df.groupby(
-        ["activity_id", "activity_name"],
+    for (
+        activity_id,
+        activity_name,
+    ), group in df.groupby(
+        [
+            "activity_id",
+            "activity_name",
+        ],
         sort=True,
     ):
+
         durations = group[
             "actual_segment_time_s"
         ].dropna()
@@ -153,17 +170,22 @@ def build_activity_learning_summary(
         if durations.empty:
             continue
 
-        fastest = float(durations.min())
-        slowest = float(durations.max())
+        fastest = float(
+            durations.min()
+        )
+
+        slowest = float(
+            durations.max()
+        )
 
         fastest_speed_m_s = (
-            50.0 / fastest
+            GPX_SEGMENT_LENGTH_M / fastest
             if fastest > 0.0
             else np.nan
         )
 
         slowest_speed_m_s = (
-            50.0 / slowest
+            GPX_SEGMENT_LENGTH_M / slowest
             if slowest > 0.0
             else np.nan
         )
@@ -172,27 +194,32 @@ def build_activity_learning_summary(
             {
                 "activity_id": activity_id,
                 "activity_name": activity_name,
-                "transitions": int(len(group)),
+                "transitions": int(
+                    len(group)
+                ),
                 "race_distance_m": float(
                     group[
                         "distance_from_start_m"
                     ].max()
-                    + 50.0
+                    + GPX_SEGMENT_LENGTH_M
                 ),
-                "median_50m_time_s": float(
+                "segment_length_m": (
+                    GPX_SEGMENT_LENGTH_M
+                ),
+                "median_segment_time_s": float(
                     durations.median()
                 ),
-                "mean_50m_time_s": float(
+                "mean_segment_time_s": float(
                     durations.mean()
                 ),
-                "fastest_50m_time_s": fastest,
+                "fastest_segment_time_s": fastest,
                 "fastest_implied_speed_m_s": (
                     fastest_speed_m_s
                 ),
                 "fastest_implied_speed_kmh": (
                     fastest_speed_m_s * 3.6
                 ),
-                "slowest_50m_time_s": slowest,
+                "slowest_segment_time_s": slowest,
                 "slowest_implied_speed_m_s": (
                     slowest_speed_m_s
                 ),
@@ -202,7 +229,9 @@ def build_activity_learning_summary(
             }
         )
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(
+        rows
+    )
 
 
 def build_extreme_transition_summary(
@@ -226,7 +255,8 @@ def build_extreme_transition_summary(
     ]
 
     missing = [
-        col for col in required
+        col
+        for col in required
         if col not in learning_df.columns
     ]
 
@@ -246,7 +276,9 @@ def build_extreme_transition_summary(
     )
 
     df = df.dropna(
-        subset=["actual_segment_time_s"]
+        subset=[
+            "actual_segment_time_s"
+        ]
     )
 
     df = df[
@@ -254,11 +286,13 @@ def build_extreme_transition_summary(
     ].copy()
 
     df["implied_speed_m_s"] = (
-        50.0 / df["actual_segment_time_s"]
+        GPX_SEGMENT_LENGTH_M
+        / df["actual_segment_time_s"]
     )
 
     df["implied_speed_kmh"] = (
-        df["implied_speed_m_s"] * 3.6
+        df["implied_speed_m_s"]
+        * 3.6
     )
 
     fastest = (
@@ -267,7 +301,9 @@ def build_extreme_transition_summary(
             ascending=True,
             kind="mergesort",
         )
-        .head(n_each)
+        .head(
+            n_each
+        )
         .copy()
     )
 
@@ -283,7 +319,9 @@ def build_extreme_transition_summary(
             ascending=False,
             kind="mergesort",
         )
-        .head(n_each)
+        .head(
+            n_each
+        )
         .copy()
     )
 
@@ -313,7 +351,10 @@ def _extract_raw_time_distance(
 
     rows: list[dict[str, Any]] = []
 
-    with fitdecode.FitReader(uploaded_file) as fit:
+    with fitdecode.FitReader(
+        uploaded_file
+    ) as fit:
+
         for frame in fit:
 
             if not isinstance(
@@ -353,7 +394,9 @@ def _extract_raw_time_distance(
                 }
             )
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(
+        rows
+    )
 
     if df.empty:
         return pd.DataFrame()
@@ -387,7 +430,9 @@ def _extract_raw_time_distance(
             subset=["timestamp"],
             keep="last",
         )
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
     )
 
 
@@ -406,12 +451,16 @@ def _build_stationary_intervals(
 
     distances = raw_df[
         "distance_m"
-    ].to_numpy(dtype=float)
+    ].to_numpy(
+        dtype=float
+    )
 
     delta_time_s = (
         timestamps.diff()
         .dt.total_seconds()
-        .to_numpy(dtype=float)
+        .to_numpy(
+            dtype=float
+        )
     )
 
     delta_distance_m = np.diff(
@@ -420,7 +469,9 @@ def _build_stationary_intervals(
     )
 
     valid_time = (
-        np.isfinite(delta_time_s)
+        np.isfinite(
+            delta_time_s
+        )
         & (
             delta_time_s > 0.0
         )
@@ -428,9 +479,13 @@ def _build_stationary_intervals(
 
     stationary = (
         valid_time
-        & np.isfinite(delta_distance_m)
+        & np.isfinite(
+            delta_distance_m
+        )
         & (
-            np.abs(delta_distance_m)
+            np.abs(
+                delta_distance_m
+            )
             <= DISTANCE_TOLERANCE_M
         )
     )
@@ -457,7 +512,8 @@ def _build_stationary_intervals(
         "implied_speed_m_s"
     ] = np.where(
         valid_time,
-        delta_distance_m / delta_time_s,
+        delta_distance_m
+        / delta_time_s,
         np.nan,
     )
 
@@ -468,7 +524,10 @@ def analyze_fit_stops(
     uploaded_file,
     activity_id: int,
     activity_name: str,
-) -> tuple[dict[str, Any], pd.DataFrame]:
+) -> tuple[
+    dict[str, Any],
+    pd.DataFrame,
+]:
 
     raw_df = _extract_raw_time_distance(
         uploaded_file
@@ -557,11 +616,14 @@ def analyze_fit_stops(
             stationary_time_s
         ),
         "stationary_time_min": (
-            stationary_time_s / 60.0
+            stationary_time_s
+            / 60.0
         ),
         "stationary_fraction_pct": (
             stationary_fraction * 100.0
-            if np.isfinite(stationary_fraction)
+            if np.isfinite(
+                stationary_fraction
+            )
             else np.nan
         ),
     }
@@ -588,16 +650,25 @@ def analyze_fit_stops(
 
 def analyze_uploaded_fit_stops(
     uploaded_files,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+]:
 
     if not uploaded_files:
+
         return (
             pd.DataFrame(),
             pd.DataFrame(),
         )
 
-    summaries: list[dict[str, Any]] = []
-    interval_frames: list[pd.DataFrame] = []
+    summaries: list[
+        dict[str, Any]
+    ] = []
+
+    interval_frames: list[
+        pd.DataFrame
+    ] = []
 
     for activity_id, uploaded_file in enumerate(
         uploaded_files,
@@ -623,6 +694,7 @@ def analyze_uploaded_fit_stops(
         )
 
         if not intervals.empty:
+
             interval_frames.append(
                 intervals
             )
@@ -657,7 +729,10 @@ def build_activity_macro_summary(
     macro_model,
 ) -> pd.DataFrame:
 
-    if learning_df is None or learning_df.empty:
+    if (
+        learning_df is None
+        or learning_df.empty
+    ):
         return pd.DataFrame()
 
     if macro_model is None:
@@ -713,7 +788,9 @@ def build_activity_macro_summary(
                     "elapsed_time_s",
                 ]
             )
-            .reset_index(drop=True)
+            .reset_index(
+                drop=True
+            )
         )
 
         if group.empty:
@@ -721,15 +798,21 @@ def build_activity_macro_summary(
 
         predicted = (
             macro_model.predict_cumulative_time(
-                distance_from_start_m=group[
-                    "distance_from_start_m"
-                ],
-                cumulative_ascent_m=group[
-                    "cumulative_ascent_m"
-                ],
-                cumulative_descent_m=group[
-                    "cumulative_descent_m"
-                ],
+                distance_from_start_m=(
+                    group[
+                        "distance_from_start_m"
+                    ]
+                ),
+                cumulative_ascent_m=(
+                    group[
+                        "cumulative_ascent_m"
+                    ]
+                ),
+                cumulative_descent_m=(
+                    group[
+                        "cumulative_descent_m"
+                    ]
+                ),
             )
         )
 
@@ -766,26 +849,38 @@ def build_activity_macro_summary(
                 "distance_m": float(
                     group[
                         "distance_from_start_m"
-                    ].iloc[end_index]
+                    ].iloc[
+                        end_index
+                    ]
                 ),
                 "cumulative_ascent_m": float(
                     group[
                         "cumulative_ascent_m"
-                    ].iloc[end_index]
+                    ].iloc[
+                        end_index
+                    ]
                 ),
                 "cumulative_descent_m": float(
                     group[
                         "cumulative_descent_m"
-                    ].iloc[end_index]
+                    ].iloc[
+                        end_index
+                    ]
                 ),
                 "mean_absolute_error_s": float(
-                    np.mean(abs_error)
+                    np.mean(
+                        abs_error
+                    )
                 ),
                 "median_absolute_error_s": float(
-                    np.median(abs_error)
+                    np.median(
+                        abs_error
+                    )
                 ),
                 "mean_bias_s": float(
-                    np.mean(error)
+                    np.mean(
+                        error
+                    )
                 ),
                 "start_actual_time_s": float(
                     actual[0]
@@ -799,28 +894,44 @@ def build_activity_macro_summary(
                 "middle_distance_m": float(
                     group[
                         "distance_from_start_m"
-                    ].iloc[middle_index]
+                    ].iloc[
+                        middle_index
+                    ]
                 ),
                 "middle_actual_time_s": float(
-                    actual[middle_index]
+                    actual[
+                        middle_index
+                    ]
                 ),
                 "middle_macro_time_s": float(
-                    predicted[middle_index]
+                    predicted[
+                        middle_index
+                    ]
                 ),
                 "middle_error_s": float(
-                    error[middle_index]
+                    error[
+                        middle_index
+                    ]
                 ),
                 "end_actual_time_s": float(
-                    actual[end_index]
+                    actual[
+                        end_index
+                    ]
                 ),
                 "end_macro_time_s": float(
-                    predicted[end_index]
+                    predicted[
+                        end_index
+                    ]
                 ),
                 "end_error_s": float(
-                    error[end_index]
+                    error[
+                        end_index
+                    ]
                 ),
                 "end_error_min": float(
-                    error[end_index]
+                    error[
+                        end_index
+                    ]
                     / 60.0
                 ),
             }
@@ -836,7 +947,10 @@ def build_macro_historical_check(
     macro_model,
 ) -> pd.DataFrame:
 
-    if learning_df is None or learning_df.empty:
+    if (
+        learning_df is None
+        or learning_df.empty
+    ):
         return pd.DataFrame()
 
     required = [
@@ -968,29 +1082,25 @@ def compare_stops_with_macro(
 
 
 # =============================================================================
-# Helpers for correct 50 m held-out validation
+# Historical leave-one-FIT-out diagnostics
 # =============================================================================
 
-def _select_non_overlapping_50m_rows(
+def _select_non_overlapping_test_rows(
     activity_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Select the actual test positions:
+    Select historical rows at multiples of GPX_SEGMENT_LENGTH_M.
 
-        0 m
-        50 m
-        100 m
-        150 m
-        ...
+    The underlying learning database remains densely sampled according to
+    LEARNING_STEP_M.
 
-    The underlying learning dataset remains 1 m rolling.
-
-    This function only creates the non-overlapping 50 m TEST trajectory.
+    This function creates the non-overlapping validation trajectory only.
     """
-    if activity_df is None or activity_df.empty:
+    if (
+        activity_df is None
+        or activity_df.empty
+    ):
         return pd.DataFrame()
-
-    df = activity_df.copy()
 
     required = [
         "distance_from_start_m",
@@ -1006,7 +1116,7 @@ def _select_non_overlapping_50m_rows(
     missing = [
         col
         for col in required
-        if col not in df.columns
+        if col not in activity_df.columns
     ]
 
     if missing:
@@ -1015,80 +1125,56 @@ def _select_non_overlapping_50m_rows(
             + ", ".join(missing)
         )
 
-    df["distance_from_start_m"] = pd.to_numeric(
-        df["distance_from_start_m"],
+    df = activity_df.copy()
+
+    df[
+        "distance_from_start_m"
+    ] = pd.to_numeric(
+        df[
+            "distance_from_start_m"
+        ],
         errors="coerce",
     )
 
     df = df.dropna(
         subset=[
-            "distance_from_start_m",
+            "distance_from_start_m"
         ]
     ).copy()
 
-    # -------------------------------------------------------------------------
-    # The learning database has one row per metre.
-    #
-    # Keep only rows representing:
-    #
-    # 0 -> 50
-    # 50 -> 100
-    # 100 -> 150
-    # ...
-    #
-    # Use rounded metres to avoid tiny floating-point remainder issues.
-    # -------------------------------------------------------------------------
-
-    rounded_distance = (
+    distances = (
         df[
             "distance_from_start_m"
         ].round()
     )
 
-    is_multiple_of_50 = (
-        np.isclose(
-            np.mod(
-                rounded_distance,
-                PREDICTION_SEGMENT_LENGTH_M,
-            ),
-            0.0,
-            atol=1e-9,
-        )
+    is_multiple = np.isclose(
+        np.mod(
+            distances,
+            GPX_SEGMENT_LENGTH_M,
+        ),
+        0.0,
+        atol=1e-9,
     )
 
-    test_df = (
+    return (
         df[
-            is_multiple_of_50
+            is_multiple
         ]
         .sort_values(
             "distance_from_start_m",
             kind="mergesort",
         )
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
     )
 
-    return test_df
-
-
-# =============================================================================
-# Correct leave-one-FIT-out validation
-# =============================================================================
 
 def _predict_held_out_activity_micro(
     training_df: pd.DataFrame,
     test_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Predict NON-OVERLAPPING 50 m test segments.
-
-    Training:
-        complete 1 m rolling transition library.
-
-    Test:
-        0->50, 50->100, 100->150, ...
-
-    The held-out race is not present in the training library.
-    """
 
     from micro_model import fit_micro_model
 
@@ -1147,65 +1233,24 @@ def _predict_held_out_activity_micro(
         "micro_error_s"
     ].abs()
 
-    result[
-        "analogue_1_distance"
-    ] = prediction_df[
-        "analogue_1_distance"
-    ].to_numpy()
+    for column in [
+        "analogue_1_distance",
+        "analogue_1_time_s",
+        "analogue_1_activity_id",
+        "analogue_1_activity_name",
+        "analogue_1_distance_from_start_m",
+        "analogue_2_distance",
+        "analogue_2_time_s",
+        "analogue_2_activity_id",
+        "analogue_2_activity_name",
+        "analogue_2_distance_from_start_m",
+    ]:
 
-    result[
-        "analogue_1_time_s"
-    ] = prediction_df[
-        "analogue_1_time_s"
-    ].to_numpy()
+        if column in prediction_df.columns:
 
-    result[
-        "analogue_1_activity_id"
-    ] = prediction_df[
-        "analogue_1_activity_id"
-    ].to_numpy()
-
-    result[
-        "analogue_1_activity_name"
-    ] = prediction_df[
-        "analogue_1_activity_name"
-    ].to_numpy()
-
-    result[
-        "analogue_1_distance_from_start_m"
-    ] = prediction_df[
-        "analogue_1_distance_from_start_m"
-    ].to_numpy()
-
-    result[
-        "analogue_2_distance"
-    ] = prediction_df[
-        "analogue_2_distance"
-    ].to_numpy()
-
-    result[
-        "analogue_2_time_s"
-    ] = prediction_df[
-        "analogue_2_time_s"
-    ].to_numpy()
-
-    result[
-        "analogue_2_activity_id"
-    ] = prediction_df[
-        "analogue_2_activity_id"
-    ].to_numpy()
-
-    result[
-        "analogue_2_activity_name"
-    ] = prediction_df[
-        "analogue_2_activity_name"
-    ].to_numpy()
-
-    result[
-        "analogue_2_distance_from_start_m"
-    ] = prediction_df[
-        "analogue_2_distance_from_start_m"
-    ].to_numpy()
+            result[column] = prediction_df[
+                column
+            ].to_numpy()
 
     return result
 
@@ -1214,17 +1259,6 @@ def _predict_held_out_activity_macro(
     training_df: pd.DataFrame,
     test_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Predict the exact same NON-OVERLAPPING 50 m test segments as the micro
-    model.
-
-    The macro model is evaluated by predicting cumulative time at:
-
-        x
-        x + 50
-
-    and taking the difference.
-    """
 
     from macro_model import fit_macro_model
 
@@ -1232,46 +1266,51 @@ def _predict_held_out_activity_macro(
         training_df
     )
 
-    # -------------------------------------------------------------------------
-    # Current cumulative state at segment start.
-    # -------------------------------------------------------------------------
+    current_distance = (
+        test_df[
+            "distance_from_start_m"
+        ].to_numpy(
+            dtype=float
+        )
+    )
 
-    current_distance = test_df[
-        "distance_from_start_m"
-    ].to_numpy(dtype=float)
+    current_ascent = (
+        test_df[
+            "cumulative_ascent_m"
+        ].to_numpy(
+            dtype=float
+        )
+    )
 
-    current_ascent = test_df[
-        "cumulative_ascent_m"
-    ].to_numpy(dtype=float)
-
-    current_descent = test_df[
-        "cumulative_descent_m"
-    ].to_numpy(dtype=float)
-
-    # -------------------------------------------------------------------------
-    # Future cumulative state at segment end.
-    #
-    # This is reconstructed from the historical 50 m terrain already attached
-    # to each 1 m learning row.
-    # -------------------------------------------------------------------------
+    current_descent = (
+        test_df[
+            "cumulative_descent_m"
+        ].to_numpy(
+            dtype=float
+        )
+    )
 
     future_ascent = (
         current_ascent
         + test_df[
             "segment_ascent_m"
-        ].to_numpy(dtype=float)
+        ].to_numpy(
+            dtype=float
+        )
     )
 
     future_descent = (
         current_descent
         + test_df[
             "segment_descent_m"
-        ].to_numpy(dtype=float)
+        ].to_numpy(
+            dtype=float
+        )
     )
 
     future_distance = (
         current_distance
-        + PREDICTION_SEGMENT_LENGTH_M
+        + GPX_SEGMENT_LENGTH_M
     )
 
     current_macro = (
@@ -1332,31 +1371,23 @@ def _predict_held_out_activity_macro(
 
 def build_leave_one_activity_out_validation(
     learning_df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+]:
     """
-    Correct leave-one-FIT-out V0 validation.
+    Development-only leave-one-FIT-out validation.
 
-    For each held-out FIT:
+    Training:
+        all dense historical transitions from every other FIT.
 
-        TRAIN:
-            all 1 m rolling transitions from every OTHER FIT
-
-        TEST:
-            non-overlapping 50 m segments from the held-out FIT
-
-    For each test 50 m segment:
-
-        - recreate the complete 7-variable query;
-        - search the training 1 m historical transition library;
-        - retrieve the two closest analogues;
-        - interpolate their observed 50 m times;
-        - independently calculate the macro 50 m prediction.
-
-    IMPORTANT:
-        This is a validation experiment only.
+    Test:
+        non-overlapping GPX_SEGMENT_LENGTH_M transitions from the held-out FIT.
     """
-
-    if learning_df is None or learning_df.empty:
+    if (
+        learning_df is None
+        or learning_df.empty
+    ):
         return (
             pd.DataFrame(),
             pd.DataFrame(),
@@ -1382,6 +1413,7 @@ def build_leave_one_activity_out_validation(
     ]
 
     if missing:
+
         raise ValueError(
             "Leave-one-FIT-out validation missing columns: "
             + ", ".join(missing)
@@ -1398,11 +1430,18 @@ def build_leave_one_activity_out_validation(
         .sort_values(
             "activity_id"
         )
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
     )
 
-    summary_rows: list[dict[str, Any]] = []
-    detail_frames: list[pd.DataFrame] = []
+    summary_rows: list[
+        dict[str, Any]
+    ] = []
+
+    detail_frames: list[
+        pd.DataFrame
+    ] = []
 
     for _, activity in activities.iterrows():
 
@@ -1414,63 +1453,42 @@ def build_leave_one_activity_out_validation(
             "activity_name"
         ]
 
-        # ---------------------------------------------------------------------
-        # TRAINING LIBRARY
-        #
-        # Full 1 m rolling transition database from every other FIT.
-        # ---------------------------------------------------------------------
-
         training_df = learning_df[
             learning_df[
                 "activity_id"
-            ] != held_out_id
+            ]
+            != held_out_id
         ].copy()
-
-        # ---------------------------------------------------------------------
-        # HELD-OUT RACE
-        #
-        # Start from complete rolling 1 m data, then select only the 50 m
-        # prediction positions.
-        # ---------------------------------------------------------------------
 
         held_out_full = learning_df[
             learning_df[
                 "activity_id"
-            ] == held_out_id
+            ]
+            == held_out_id
         ].copy()
 
-        test_df = _select_non_overlapping_50m_rows(
-            held_out_full
+        test_df = (
+            _select_non_overlapping_test_rows(
+                held_out_full
+            )
         )
 
         if test_df.empty:
             continue
 
-        # ---------------------------------------------------------------------
-        # MICRO
-        # ---------------------------------------------------------------------
-
         micro_result = (
             _predict_held_out_activity_micro(
-                training_df=training_df,
-                test_df=test_df,
+                training_df,
+                test_df,
             )
         )
-
-        # ---------------------------------------------------------------------
-        # MACRO
-        # ---------------------------------------------------------------------
 
         macro_result = (
             _predict_held_out_activity_macro(
-                training_df=training_df,
-                test_df=test_df,
+                training_df,
+                test_df,
             )
         )
-
-        # ---------------------------------------------------------------------
-        # Combine
-        # ---------------------------------------------------------------------
 
         detail = test_df[
             [
@@ -1540,7 +1558,6 @@ def build_leave_one_activity_out_validation(
             ]
         )
 
-        # Analogue diagnostics.
         for column in [
             "analogue_1_distance",
             "analogue_1_time_s",
@@ -1553,7 +1570,9 @@ def build_leave_one_activity_out_validation(
             "analogue_2_activity_name",
             "analogue_2_distance_from_start_m",
         ]:
+
             if column in micro_result.columns:
+
                 detail[column] = micro_result[
                     column
                 ].to_numpy()
@@ -1561,10 +1580,6 @@ def build_leave_one_activity_out_validation(
         detail_frames.append(
             detail
         )
-
-        # ---------------------------------------------------------------------
-        # Segment-level metrics
-        # ---------------------------------------------------------------------
 
         actual = detail[
             "actual_segment_time_s"
@@ -1585,11 +1600,13 @@ def build_leave_one_activity_out_validation(
         )
 
         micro_error = (
-            micro_pred - actual
+            micro_pred
+            - actual
         )
 
         macro_error = (
-            macro_pred - actual
+            macro_pred
+            - actual
         )
 
         micro_minus_macro = (
@@ -1597,43 +1614,33 @@ def build_leave_one_activity_out_validation(
             - macro_pred
         )
 
-        # ---------------------------------------------------------------------
-        # Correct cumulative comparison
-        #
-        # ONLY these non-overlapping 50 m predictions are accumulated.
-        # ---------------------------------------------------------------------
-
         actual_total = float(
-            np.sum(actual)
+            np.sum(
+                actual
+            )
         )
 
         micro_total = float(
-            np.sum(micro_pred)
+            np.sum(
+                micro_pred
+            )
         )
 
         macro_total = float(
-            np.sum(macro_pred)
+            np.sum(
+                macro_pred
+            )
         )
 
-        # ---------------------------------------------------------------------
-        # Compare the time actually represented by the 50 m test segments
-        # with the cumulative elapsed time reported by the FIT.
-        #
-        # The difference is typically the final residual/pause portion because
-        # the historical learning rows only cover complete 50 m transitions.
-        # ---------------------------------------------------------------------
-
-        actual_elapsed_at_last_segment_start = float(
+        actual_elapsed_at_last_test_start = float(
             test_df[
                 "elapsed_time_s"
             ].iloc[-1]
         )
 
-        actual_elapsed_after_last_segment = (
-            actual_elapsed_at_last_segment_start
-            + actual[
-                -1
-            ]
+        actual_elapsed_after_last_test = (
+            actual_elapsed_at_last_test_start
+            + actual[-1]
         )
 
         summary_rows.append(
@@ -1641,23 +1648,27 @@ def build_leave_one_activity_out_validation(
                 "activity_id": held_out_id,
                 "activity_name": held_out_name,
 
+                "segment_length_m": (
+                    GPX_SEGMENT_LENGTH_M
+                ),
+
                 "training_activities": int(
                     training_df[
                         "activity_id"
                     ].nunique()
                 ),
 
-                "training_rows_1m_rolling": int(
-                    len(training_df)
+                "training_rows": int(
+                    len(
+                        training_df
+                    )
                 ),
 
-                "test_50m_segments": int(
-                    len(test_df)
+                "test_segments": int(
+                    len(
+                        test_df
+                    )
                 ),
-
-                # -------------------------------------------------------------
-                # Segment accuracy
-                # -------------------------------------------------------------
 
                 "micro_mae_s": float(
                     np.mean(
@@ -1691,10 +1702,6 @@ def build_leave_one_activity_out_validation(
                     )
                 ),
 
-                # -------------------------------------------------------------
-                # Bias
-                # -------------------------------------------------------------
-
                 "micro_bias_s": float(
                     np.mean(
                         micro_error
@@ -1706,10 +1713,6 @@ def build_leave_one_activity_out_validation(
                         macro_error
                     )
                 ),
-
-                # -------------------------------------------------------------
-                # Micro versus macro
-                # -------------------------------------------------------------
 
                 "mean_micro_minus_macro_s": float(
                     np.mean(
@@ -1731,11 +1734,7 @@ def build_leave_one_activity_out_validation(
                     )
                 ),
 
-                # -------------------------------------------------------------
-                # Cumulative 50 m comparison
-                # -------------------------------------------------------------
-
-                "actual_50m_segment_time_total_s": (
+                "actual_test_time_total_s": (
                     actual_total
                 ),
 
@@ -1760,30 +1759,30 @@ def build_leave_one_activity_out_validation(
                 "micro_finish_error_min": (
                     micro_total
                     - actual_total
-                ) / 60.0,
+                )
+                / 60.0,
 
                 "macro_finish_error_min": (
                     macro_total
                     - actual_total
-                ) / 60.0,
+                )
+                / 60.0,
 
-                # -------------------------------------------------------------
-                # Diagnostic bookkeeping
-                # -------------------------------------------------------------
-
-                "actual_elapsed_at_last_test_start_s": (
-                    actual_elapsed_at_last_segment_start
+                "actual_elapsed_after_last_test_s": (
+                    actual_elapsed_after_last_test
                 ),
 
-                "actual_elapsed_after_last_50m_test_s": (
-                    actual_elapsed_after_last_segment
-                ),
-
-                "last_test_segment_end_distance_m": float(
+                "last_test_start_distance_m": float(
                     test_df[
                         "distance_from_start_m"
                     ].iloc[-1]
-                    + PREDICTION_SEGMENT_LENGTH_M
+                ),
+
+                "last_test_end_distance_m": float(
+                    test_df[
+                        "distance_from_start_m"
+                    ].iloc[-1]
+                    + GPX_SEGMENT_LENGTH_M
                 ),
             }
         )
@@ -1792,14 +1791,16 @@ def build_leave_one_activity_out_validation(
         summary_rows
     )
 
-    detail_df = (
-        pd.concat(
+    if detail_frames:
+
+        detail_df = pd.concat(
             detail_frames,
             ignore_index=True,
         )
-        if detail_frames
-        else pd.DataFrame()
-    )
+
+    else:
+
+        detail_df = pd.DataFrame()
 
     return (
         summary_df,
@@ -1808,7 +1809,448 @@ def build_leave_one_activity_out_validation(
 
 
 # =============================================================================
-# All diagnostics
+# Simulation diagnostics
+# =============================================================================
+
+def build_simulation_divergence_diagnostic(
+    simulation_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build a compact diagnostic table showing where macro and micro diverge
+    during the simulated race.
+
+    This function does NOT modify the simulation.
+
+    It exposes:
+
+        distance
+        macro cumulative time
+        micro cumulative time
+        micro - macro cumulative difference
+        segment-level difference
+    """
+    if (
+        simulation_df is None
+        or simulation_df.empty
+    ):
+        return pd.DataFrame()
+
+    required = [
+        "distance_from_start_m",
+        "macro_arrival_time_s",
+        "micro_arrival_time_s",
+    ]
+
+    missing = [
+        col
+        for col in required
+        if col not in simulation_df.columns
+    ]
+
+    if missing:
+        raise ValueError(
+            "Simulation divergence diagnostics missing columns: "
+            + ", ".join(missing)
+        )
+
+    result = simulation_df[
+        required
+        + (
+            [
+                "macro_predicted_time_s",
+                "micro_predicted_time_s",
+                "micro_minus_macro_s",
+            ]
+            if all(
+                column in simulation_df.columns
+                for column in [
+                    "macro_predicted_time_s",
+                    "micro_predicted_time_s",
+                    "micro_minus_macro_s",
+                ]
+            )
+            else []
+        )
+        + (
+            [
+                "aid_station_name",
+                "aid_station_stop_min",
+            ]
+            if all(
+                column in simulation_df.columns
+                for column in [
+                    "aid_station_name",
+                    "aid_station_stop_min",
+                ]
+            )
+            else []
+        )
+    ].copy()
+
+    result[
+        "distance_km"
+    ] = (
+        result[
+            "distance_from_start_m"
+        ]
+        / 1000.0
+    )
+
+    result[
+        "macro_cumulative_time_h"
+    ] = (
+        result[
+            "macro_arrival_time_s"
+        ]
+        / 3600.0
+    )
+
+    result[
+        "micro_cumulative_time_h"
+    ] = (
+        result[
+            "micro_arrival_time_s"
+        ]
+        / 3600.0
+    )
+
+    result[
+        "micro_minus_macro_cumulative_min"
+    ] = (
+        (
+            result[
+                "micro_arrival_time_s"
+            ]
+            - result[
+                "macro_arrival_time_s"
+            ]
+        )
+        / 60.0
+    )
+
+    return result
+
+
+def build_simulation_divergence_checkpoints(
+    simulation_df: pd.DataFrame,
+    checkpoint_distances_km: list[float] | None = None,
+) -> pd.DataFrame:
+    """
+    Extract macro/micro cumulative divergence near selected course
+    checkpoints.
+
+    This is useful for answering:
+
+        Is the final difference accumulating gradually,
+        or is one section responsible for most of it?
+    """
+    diagnostic_df = (
+        build_simulation_divergence_diagnostic(
+            simulation_df
+        )
+    )
+
+    if diagnostic_df.empty:
+        return diagnostic_df
+
+    if checkpoint_distances_km is None:
+
+        max_distance_km = float(
+            diagnostic_df[
+                "distance_km"
+            ].max()
+        )
+
+        checkpoint_distances_km = [
+            max_distance_km * 0.20,
+            max_distance_km * 0.40,
+            max_distance_km * 0.60,
+            max_distance_km * 0.80,
+            max_distance_km,
+        ]
+
+    rows: list[
+        dict[str, Any]
+    ] = []
+
+    distances = diagnostic_df[
+        "distance_km"
+    ].to_numpy(
+        dtype=float
+    )
+
+    for checkpoint_km in checkpoint_distances_km:
+
+        if not np.isfinite(
+            checkpoint_km
+        ):
+            continue
+
+        index = int(
+            np.argmin(
+                np.abs(
+                    distances
+                    - checkpoint_km
+                )
+            )
+        )
+
+        row = diagnostic_df.iloc[
+            index
+        ]
+
+        rows.append(
+            {
+                "requested_checkpoint_km": (
+                    float(
+                        checkpoint_km
+                    )
+                ),
+                "actual_checkpoint_km": (
+                    float(
+                        row[
+                            "distance_km"
+                        ]
+                    )
+                ),
+                "macro_cumulative_time_h": (
+                    float(
+                        row[
+                            "macro_cumulative_time_h"
+                        ]
+                    )
+                ),
+                "micro_cumulative_time_h": (
+                    float(
+                        row[
+                            "micro_cumulative_time_h"
+                        ]
+                    )
+                ),
+                "micro_minus_macro_cumulative_min": (
+                    float(
+                        row[
+                            "micro_minus_macro_cumulative_min"
+                        ]
+                    )
+                ),
+            }
+        )
+
+    return pd.DataFrame(
+        rows
+    )
+
+
+def build_macro_clipping_diagnostic(
+    simulation_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Diagnose negative raw macro increments that were constrained to zero.
+
+    This does not change the simulation.
+    """
+    if (
+        simulation_df is None
+        or simulation_df.empty
+    ):
+        return pd.DataFrame()
+
+    required = [
+        "distance_from_start_m",
+        "raw_macro_predicted_time_s",
+        "macro_predicted_time_s",
+        "macro_time_clipped",
+    ]
+
+    missing = [
+        column
+        for column in required
+        if column not in simulation_df.columns
+    ]
+
+    if missing:
+        raise ValueError(
+            "Macro clipping diagnostics missing columns: "
+            + ", ".join(missing)
+        )
+
+    clipped = simulation_df[
+        simulation_df[
+            "macro_time_clipped"
+        ]
+    ].copy()
+
+    if clipped.empty:
+        return pd.DataFrame(
+            columns=required
+        )
+
+    result = clipped[
+        required
+    ].copy()
+
+    result[
+        "clipped_correction_s"
+    ] = (
+        result[
+            "macro_predicted_time_s"
+        ]
+        - result[
+            "raw_macro_predicted_time_s"
+        ]
+    )
+
+    return result
+
+
+def build_simulation_section_summary(
+    simulation_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Summarize model differences by coarse course section.
+
+    Sections are diagnostic only.
+
+    Default:
+        10 equal-distance sections.
+    """
+    diagnostic_df = (
+        build_simulation_divergence_diagnostic(
+            simulation_df
+        )
+    )
+
+    if diagnostic_df.empty:
+        return diagnostic_df
+
+    max_distance = float(
+        diagnostic_df[
+            "distance_km"
+        ].max()
+    )
+
+    if max_distance <= 0.0:
+        return pd.DataFrame()
+
+    section_edges = np.linspace(
+        0.0,
+        max_distance,
+        11,
+    )
+
+    diagnostic_df[
+        "section"
+    ] = pd.cut(
+        diagnostic_df[
+            "distance_km"
+        ],
+        bins=section_edges,
+        labels=False,
+        include_lowest=True,
+    )
+
+    rows: list[
+        dict[str, Any]
+    ] = []
+
+    for section, group in diagnostic_df.groupby(
+        "section",
+        dropna=True,
+    ):
+
+        rows.append(
+            {
+                "section": int(
+                    section
+                ) + 1,
+                "start_km": float(
+                    section_edges[
+                        int(section)
+                    ]
+                ),
+                "end_km": float(
+                    section_edges[
+                        int(section) + 1
+                    ]
+                ),
+                "mean_segment_difference_s": (
+                    float(
+                        group.get(
+                            "micro_minus_macro_s",
+                            pd.Series(
+                                dtype=float
+                            ),
+                        ).mean()
+                    )
+                    if "micro_minus_macro_s"
+                    in group.columns
+                    else np.nan
+                ),
+                "end_cumulative_difference_min": (
+                    float(
+                        group[
+                            "micro_minus_macro_cumulative_min"
+                        ].iloc[-1]
+                    )
+                ),
+                "segments": int(
+                    len(group)
+                ),
+            }
+        )
+
+    return pd.DataFrame(
+        rows
+    )
+
+
+# =============================================================================
+# Combined simulation diagnostic package
+# =============================================================================
+
+def build_simulation_diagnostics(
+    simulation_df: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    """
+    Build the complete disposable diagnostics package for one simulation.
+
+    Nothing returned here feeds back into the simulator.
+    """
+    divergence = (
+        build_simulation_divergence_diagnostic(
+            simulation_df
+        )
+    )
+
+    checkpoints = (
+        build_simulation_divergence_checkpoints(
+            simulation_df
+        )
+    )
+
+    clipping = (
+        build_macro_clipping_diagnostic(
+            simulation_df
+        )
+    )
+
+    sections = (
+        build_simulation_section_summary(
+            simulation_df
+        )
+    )
+
+    return {
+        "simulation_divergence": divergence,
+        "simulation_checkpoints": checkpoints,
+        "macro_clipping": clipping,
+        "simulation_sections": sections,
+    }
+
+
+# =============================================================================
+# Combined diagnostics package
 # =============================================================================
 
 def build_all_diagnostics(
