@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import streamlit as st
 
+from aid_stations import (
+    AidStation,
+    normalize_aid_stations,
+    summarize_aid_stations,
+)
+
 from config import (
     GPX_SEGMENT_LENGTH_M,
     LEARNING_STEP_M,
@@ -31,6 +37,8 @@ from gpx_profile import (
 )
 
 from simulator import (
+    build_aid_station_summary,
+    format_seconds,
     simulate_race,
 )
 
@@ -63,6 +71,7 @@ DEFAULT_STATE = {
     "simulation_df": None,
     "race_summary": None,
     "simulation_diagnostics": None,
+    "aid_stations": [],
     "fit_signature": None,
     "gpx_signature": None,
 }
@@ -326,7 +335,11 @@ if (
 
         st.metric(
             "Median transition time",
-            f"{learning_summary['median_segment_time_s']:.2f} s",
+            format_seconds(
+                learning_summary[
+                    "median_segment_time_s"
+                ]
+            ),
         )
 
     col4, col5, col6 = st.columns(3)
@@ -335,21 +348,33 @@ if (
 
         st.metric(
             "Mean transition time",
-            f"{learning_summary['mean_segment_time_s']:.2f} s",
+            format_seconds(
+                learning_summary[
+                    "mean_segment_time_s"
+                ]
+            ),
         )
 
     with col5:
 
         st.metric(
             "Fastest transition",
-            f"{learning_summary['min_segment_time_s']:.2f} s",
+            format_seconds(
+                learning_summary[
+                    "min_segment_time_s"
+                ]
+            ),
         )
 
     with col6:
 
         st.metric(
             "Slowest transition",
-            f"{learning_summary['max_segment_time_s']:.2f} s",
+            format_seconds(
+                learning_summary[
+                    "max_segment_time_s"
+                ]
+            ),
         )
 
     with st.expander(
@@ -395,14 +420,22 @@ if macro_model is not None:
 
         st.metric(
             "Training MAE",
-            f"{macro_summary['training_mae_s']:.2f} s",
+            format_seconds(
+                macro_summary[
+                    "training_mae_s"
+                ]
+            ),
         )
 
     with col2:
 
         st.metric(
             "Training RMSE",
-            f"{macro_summary['training_rmse_s']:.2f} s",
+            format_seconds(
+                macro_summary[
+                    "training_rmse_s"
+                ]
+            ),
         )
 
     with col3:
@@ -618,6 +651,203 @@ if (
 
 
 # =============================================================================
+# 2A. AID STATIONS
+# =============================================================================
+
+st.subheader(
+    "Aid stations"
+)
+
+st.write(
+    "Enter the expected stationary time at each aid station. "
+    "Distance is measured from race start."
+)
+
+# -----------------------------------------------------------------------------
+# Existing aid-station state
+# -----------------------------------------------------------------------------
+
+existing_aid_stations = (
+    st.session_state[
+        "aid_stations"
+    ]
+)
+
+if existing_aid_stations:
+
+    aid_station_rows = [
+        {
+            "name": station.name,
+            "distance_km": (
+                station.distance_from_start_m
+                / 1000.0
+            ),
+            "stop_minutes": station.stop_minutes,
+        }
+        for station in existing_aid_stations
+    ]
+
+else:
+
+    aid_station_rows = []
+
+
+aid_station_editor_df = st.data_editor(
+    aid_station_rows,
+    num_rows="dynamic",
+    width="stretch",
+    hide_index=True,
+    column_config={
+        "name": st.column_config.TextColumn(
+            "Aid station",
+            help="Station name",
+        ),
+        "distance_km": st.column_config.NumberColumn(
+            "Distance (km)",
+            min_value=0.0,
+            step=0.1,
+            format="%.1f",
+        ),
+        "stop_minutes": st.column_config.NumberColumn(
+            "Expected stop (min)",
+            min_value=0.0,
+            step=1.0,
+            format="%.0f",
+        ),
+    },
+    key="aid_station_editor",
+)
+
+
+# -----------------------------------------------------------------------------
+# Store aid station input
+# -----------------------------------------------------------------------------
+
+def _read_aid_station_editor(
+    editor_df,
+) -> list[AidStation]:
+
+    if (
+        editor_df is None
+        or editor_df.empty
+    ):
+        return []
+
+    stations: list[AidStation] = []
+
+    for _, row in editor_df.iterrows():
+
+        name = str(
+            row.get(
+                "name",
+                "",
+            )
+        ).strip()
+
+        distance_km = row.get(
+            "distance_km"
+        )
+
+        stop_minutes = row.get(
+            "stop_minutes"
+        )
+
+        # Empty editor rows are ignored.
+        if (
+            not name
+            and (
+                distance_km is None
+                or (
+                    isinstance(
+                        distance_km,
+                        float,
+                    )
+                    and distance_km != distance_km
+                )
+            )
+            and (
+                stop_minutes is None
+                or (
+                    isinstance(
+                        stop_minutes,
+                        float,
+                    )
+                    and stop_minutes != stop_minutes
+                )
+            )
+        ):
+            continue
+
+        if (
+            not name
+            or distance_km is None
+            or stop_minutes is None
+        ):
+            raise ValueError(
+                "Each aid station must contain a name, "
+                "distance and expected stop duration."
+            )
+
+        stations.append(
+            AidStation(
+                name=name,
+                distance_from_start_m=(
+                    float(
+                        distance_km
+                    )
+                    * 1000.0
+                ),
+                stop_minutes=float(
+                    stop_minutes
+                ),
+            )
+        )
+
+    return normalize_aid_stations(
+        stations
+    )
+
+
+try:
+
+    edited_aid_stations = (
+        _read_aid_station_editor(
+            aid_station_editor_df
+        )
+    )
+
+    st.session_state[
+        "aid_stations"
+    ] = edited_aid_stations
+
+    if edited_aid_stations:
+
+        aid_summary = summarize_aid_stations(
+            edited_aid_stations
+        )
+
+        total_stop_minutes = float(
+            aid_summary[
+                "stop_minutes"
+            ].sum()
+        )
+
+        st.caption(
+            f"{len(edited_aid_stations)} aid station(s) | "
+            f"Total expected stationary time: "
+            f"{total_stop_minutes:.0f} min"
+        )
+
+except Exception as exc:
+
+    st.error(
+        f"Aid-station input error: {exc}"
+    )
+
+    edited_aid_stations = []
+
+
+# =============================================================================
 # Build normalized GPX
 # =============================================================================
 
@@ -631,6 +861,10 @@ if uploaded_gpx_file is not None:
 
         try:
 
+            aid_stations = st.session_state[
+                "aid_stations"
+            ]
+
             with st.spinner(
                 "Building normalized GPX profile..."
             ):
@@ -638,7 +872,9 @@ if uploaded_gpx_file is not None:
                 gpx_profile_df = (
                     build_gpx_profile(
                         uploaded_gpx_file,
-                        aid_stations=None,
+                        aid_stations=(
+                            aid_stations
+                        ),
                     )
                 )
 
@@ -830,12 +1066,6 @@ else:
                 "race_summary"
             ] = race_summary
 
-            # -----------------------------------------------------------------
-            # Diagnostics are calculated only after an explicit simulation run.
-            #
-            # This keeps diagnostics outside the operational simulator.
-            # -----------------------------------------------------------------
-
             with st.spinner(
                 "Building simulation diagnostics..."
             ):
@@ -890,6 +1120,10 @@ if (
         "Race prediction"
     )
 
+    # -------------------------------------------------------------------------
+    # Primary race-time outputs
+    # -------------------------------------------------------------------------
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -905,8 +1139,10 @@ if (
 
         st.metric(
             "Macro predicted race time",
-            (
-                f"{race_summary['macro_final_race_h']:.2f} h"
+            format_seconds(
+                race_summary[
+                    "macro_final_race_s"
+                ]
             ),
         )
 
@@ -914,10 +1150,16 @@ if (
 
         st.metric(
             "Micro predicted race time",
-            (
-                f"{race_summary['micro_final_race_h']:.2f} h"
+            format_seconds(
+                race_summary[
+                    "micro_final_race_s"
+                ]
             ),
         )
+
+    # -------------------------------------------------------------------------
+    # Additional race information
+    # -------------------------------------------------------------------------
 
     col4, col5, col6 = st.columns(3)
 
@@ -926,7 +1168,11 @@ if (
         st.metric(
             "Aid-station time",
             (
-                f"{race_summary['total_aid_stop_min']:.1f} min"
+                format_seconds(
+                    race_summary[
+                        "total_aid_stop_s"
+                    ]
+                )
             ),
         )
 
@@ -944,6 +1190,100 @@ if (
         st.metric(
             "Segments",
             f"{race_summary['segments']:,}",
+        )
+
+    # -------------------------------------------------------------------------
+    # Aid-station arrival/departure table
+    # -------------------------------------------------------------------------
+
+    aid_station_summary = (
+        build_aid_station_summary(
+            simulation_df
+        )
+    )
+
+    if (
+        aid_station_summary is not None
+        and not aid_station_summary.empty
+    ):
+
+        st.subheader(
+            "Aid-station predictions"
+        )
+
+        display_aid_summary = (
+            aid_station_summary.copy()
+        )
+
+        display_aid_summary[
+            "distance_km"
+        ] = (
+            display_aid_summary[
+                "aid_station_distance_m"
+            ]
+            / 1000.0
+        )
+
+        display_aid_summary[
+            "expected_stop"
+        ] = display_aid_summary[
+            "aid_station_stop_min"
+        ].map(
+            lambda value: (
+                format_seconds(
+                    float(
+                        value
+                    )
+                    * 60.0
+                )
+            )
+        )
+
+        display_aid_summary[
+            "macro_arrival"
+        ] = display_aid_summary[
+            "macro_arrival_time_s"
+        ].map(
+            format_seconds
+        )
+
+        display_aid_summary[
+            "micro_arrival"
+        ] = display_aid_summary[
+            "micro_arrival_time_s"
+        ].map(
+            format_seconds
+        )
+
+        display_aid_summary[
+            "macro_departure"
+        ] = display_aid_summary[
+            "macro_departure_time_s"
+        ].map(
+            format_seconds
+        )
+
+        display_aid_summary[
+            "micro_departure"
+        ] = display_aid_summary[
+            "micro_departure_time_s"
+        ].map(
+            format_seconds
+        )
+
+        st.dataframe(
+            display_aid_summary[
+                [
+                    "aid_station_name",
+                    "distance_km",
+                    "expected_stop",
+                    "macro_arrival",
+                    "micro_arrival",
+                    "macro_departure",
+                    "micro_departure",
+                ]
+            ],
+            width="stretch",
         )
 
     # -------------------------------------------------------------------------
@@ -969,8 +1309,10 @@ if (
 
         st.metric(
             "Clipped time",
-            (
-                f"{race_summary['macro_clipped_minutes']:.2f} min"
+            format_seconds(
+                race_summary[
+                    "macro_clipped_seconds"
+                ]
             ),
         )
 
@@ -1007,8 +1349,8 @@ if (
 #
 # Everything below this point is disposable.
 #
-# It is deliberately implemented through diagnostics.py rather than inside
-# the operational simulator.
+# The calculations are implemented in diagnostics.py.
+# app.py only displays their outputs.
 # =============================================================================
 
 if (
@@ -1155,4 +1497,3 @@ if (
         st.success(
             "No macro negative-duration segments were clipped."
         )
-        
