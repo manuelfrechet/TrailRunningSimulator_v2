@@ -15,6 +15,7 @@ from config import (
 )
 
 from diagnostics import (
+    build_macro_model_comparison,
     build_simulation_diagnostics,
 )
 
@@ -67,12 +68,18 @@ DEFAULT_STATE = {
     "learning_summary": None,
     "macro_model": None,
     "micro_model": None,
+
     "raw_gpx_df": None,
     "gpx_profile_df": None,
+
     "simulation_df": None,
     "race_summary": None,
     "simulation_diagnostics": None,
+
+    "macro_model_comparison": None,
+
     "aid_stations": [],
+
     "fit_signature": None,
     "gpx_signature": None,
 }
@@ -183,6 +190,10 @@ if (
         "simulation_diagnostics"
     ] = None
 
+    st.session_state[
+        "macro_model_comparison"
+    ] = None
+
 
 # =============================================================================
 # Build historical learning
@@ -268,6 +279,10 @@ if uploaded_fit_files:
 
                 st.session_state[
                     "simulation_diagnostics"
+                ] = None
+
+                st.session_state[
+                    "macro_model_comparison"
                 ] = None
 
                 st.success(
@@ -416,7 +431,7 @@ if macro_model is not None:
     )
 
     st.subheader(
-        "Macro model"
+        "Macro model 1"
     )
 
     col1, col2, col3 = st.columns(3)
@@ -571,6 +586,10 @@ if (
         "simulation_diagnostics"
     ] = None
 
+    st.session_state[
+        "macro_model_comparison"
+    ] = None
+
 
 # =============================================================================
 # Raw GPX inspection
@@ -669,13 +688,11 @@ st.write(
 )
 
 
-# -----------------------------------------------------------------------------
-# Current SAVED aid-station state
-# -----------------------------------------------------------------------------
-
-current_aid_stations = st.session_state[
-    "aid_stations"
-]
+current_aid_stations = (
+    st.session_state[
+        "aid_stations"
+    ]
+)
 
 editor_rows = [
     {
@@ -692,13 +709,6 @@ editor_rows = [
 
 # -----------------------------------------------------------------------------
 # Aid-station form
-#
-# IMPORTANT:
-#
-# Streamlit reruns the script when the user interacts with a widget.
-#
-# The form prevents those edits from being committed to the application state
-# until the user explicitly presses "Save aid stations".
 # -----------------------------------------------------------------------------
 
 with st.form(
@@ -745,18 +755,15 @@ with st.form(
     )
 
 
-# -----------------------------------------------------------------------------
-# Editor conversion helpers
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Aid-station editor conversion
+# =============================================================================
 
 def _editor_to_dataframe(
     editor_value,
 ) -> pd.DataFrame:
     """
-    Convert editor output into a DataFrame.
-
-    The normal Streamlit data-editor output is a DataFrame, but this helper
-    remains defensive so that state changes cannot cause a type error.
+    Convert the Streamlit editor value into a DataFrame.
     """
 
     if editor_value is None:
@@ -814,7 +821,7 @@ def _read_aid_station_editor(
     editor_value,
 ) -> list[AidStation]:
     """
-    Convert submitted editor rows into validated AidStation objects.
+    Convert submitted editor rows to validated AidStation objects.
     """
 
     editor_df = _editor_to_dataframe(
@@ -879,7 +886,7 @@ def _read_aid_station_editor(
             )
         )
 
-        # Completely empty rows are allowed.
+        # Completely blank rows are ignored.
         if (
             name_empty
             and distance_empty
@@ -887,7 +894,7 @@ def _read_aid_station_editor(
         ):
             continue
 
-        # Partially completed rows are not allowed.
+        # Partially populated rows are invalid.
         if (
             name_empty
             or distance_empty
@@ -921,12 +928,9 @@ def _read_aid_station_editor(
     )
 
 
-# -----------------------------------------------------------------------------
-# Save button action
-#
-# IMPORTANT:
-# This is the ONLY place where edited aid-station values are committed.
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Save aid stations
+# =============================================================================
 
 if save_aid_stations:
 
@@ -960,13 +964,13 @@ if save_aid_stations:
             "aid_stations"
         ] = new_aid_stations
 
-        # ---------------------------------------------------------------------
-        # Changing the saved aid-station configuration invalidates the
-        # normalized GPX profile because the profile contains the station
-        # mapping.
-        # ---------------------------------------------------------------------
-
         if old_signature != new_signature:
+
+            # -----------------------------------------------------------------
+            # The normalized GPX contains the aid-station mapping, therefore
+            # changing the saved configuration invalidates the profile and
+            # subsequent simulation.
+            # -----------------------------------------------------------------
 
             st.session_state[
                 "gpx_profile_df"
@@ -1253,10 +1257,6 @@ else:
                 "race_summary"
             ] = race_summary
 
-            # -----------------------------------------------------------------
-            # Diagnostics are deliberately separate from simulation.
-            # -----------------------------------------------------------------
-
             with st.spinner(
                 "Building simulation diagnostics..."
             ):
@@ -1316,7 +1316,7 @@ if (
     )
 
     # -------------------------------------------------------------------------
-    # Primary race-time outputs
+    # Primary results
     # -------------------------------------------------------------------------
 
     col1, col2, col3 = st.columns(3)
@@ -1353,7 +1353,7 @@ if (
         )
 
     # -------------------------------------------------------------------------
-    # Secondary summary
+    # Secondary results
     # -------------------------------------------------------------------------
 
     col4, col5, col6 = st.columns(3)
@@ -1554,12 +1554,12 @@ if (
 #
 # Everything below this point is disposable.
 #
-# Calculations live in diagnostics.py.
-# app.py only displays their outputs.
+# Diagnostic calculations live in diagnostics.py.
+# app.py only orchestrates and displays them.
 # =============================================================================
 
 if (
-    simulation_diagnostics is not None
+    learning_df is not None
 ):
 
     st.divider()
@@ -1568,137 +1568,388 @@ if (
         "Diagnostics"
     )
 
-    # -------------------------------------------------------------------------
-    # Cumulative macro vs micro
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # A. Macro Model 1 vs Macro Model 2
+    # =========================================================================
 
-    divergence_df = (
-        simulation_diagnostics.get(
-            "simulation_divergence"
-        )
+    st.subheader(
+        "Macro Model 1 vs Macro Model 2"
     )
 
-    if (
-        divergence_df is not None
-        and not divergence_df.empty
-    ):
+    st.write(
+        "Macro Model 2 is a diagnostic experiment only. "
+        "It does not replace Macro Model 1 in the simulator."
+    )
 
-        st.subheader(
-            "Cumulative macro vs micro"
+    if gpx_profile_df is None:
+
+        st.info(
+            "Build the normalized GPX profile before running "
+            "the macro-model comparison."
         )
 
-        chart_df = divergence_df[
-            [
-                "distance_km",
-                "macro_cumulative_time_h",
-                "micro_cumulative_time_h",
-            ]
-        ].copy()
+    else:
 
-        st.line_chart(
-            chart_df.set_index(
-                "distance_km"
+        if st.button(
+            "Run Macro Model 1 vs Macro Model 2 comparison",
+            key="run_macro_model_comparison",
+        ):
+
+            try:
+
+                with st.spinner(
+                    "Comparing Macro Model 1 and Macro Model 2..."
+                ):
+
+                    comparison = (
+                        build_macro_model_comparison(
+                            learning_df=(
+                                learning_df
+                            ),
+                            gpx_profile_df=(
+                                gpx_profile_df
+                            ),
+                        )
+                    )
+
+                st.session_state[
+                    "macro_model_comparison"
+                ] = comparison
+
+                st.success(
+                    "Macro Model comparison completed."
+                )
+
+            except Exception as exc:
+
+                st.error(
+                    f"Macro Model comparison failed: {exc}"
+                )
+
+                st.exception(exc)
+
+    macro_model_comparison = (
+        st.session_state[
+            "macro_model_comparison"
+        ]
+    )
+
+    if macro_model_comparison is not None:
+
+        # ---------------------------------------------------------------------
+        # Historical performance
+        # ---------------------------------------------------------------------
+
+        historical_comparison = (
+            macro_model_comparison.get(
+                "historical"
             )
         )
 
-        st.subheader(
-            "Micro minus macro cumulative difference"
+        if (
+            historical_comparison is not None
+            and not historical_comparison.empty
+        ):
+
+            st.markdown(
+                "#### Historical FIT performance"
+            )
+
+            historical_display = (
+                historical_comparison.copy()
+            )
+
+            historical_display[
+                "MAE"
+            ] = historical_display[
+                "mae_s"
+            ].map(
+                format_seconds
+            )
+
+            historical_display[
+                "RMSE"
+            ] = historical_display[
+                "rmse_s"
+            ].map(
+                format_seconds
+            )
+
+            historical_display[
+                "Bias"
+            ] = historical_display[
+                "bias_s"
+            ].map(
+                format_seconds
+            )
+
+            st.dataframe(
+                historical_display[
+                    [
+                        "model",
+                        "constraint",
+                        "training_rows",
+                        "training_activities",
+                        "MAE",
+                        "RMSE",
+                        "Bias",
+                        "r2",
+                    ]
+                ],
+                width="stretch",
+            )
+
+        # ---------------------------------------------------------------------
+        # Coefficient comparison
+        # ---------------------------------------------------------------------
+
+        coefficient_comparison = (
+            macro_model_comparison.get(
+                "coefficients"
+            )
         )
 
-        divergence_chart_df = (
-            divergence_df[
+        if (
+            coefficient_comparison is not None
+            and not coefficient_comparison.empty
+        ):
+
+            with st.expander(
+                "Macro coefficients",
+                expanded=False,
+            ):
+
+                st.dataframe(
+                    coefficient_comparison,
+                    width="stretch",
+                )
+
+        # ---------------------------------------------------------------------
+        # SwissPeak GPX behaviour
+        # ---------------------------------------------------------------------
+
+        gpx_summary = (
+            macro_model_comparison.get(
+                "gpx_summary"
+            )
+        )
+
+        if (
+            gpx_summary is not None
+            and not gpx_summary.empty
+        ):
+
+            st.markdown(
+                "#### Behaviour on current normalized GPX"
+            )
+
+            gpx_display = (
+                gpx_summary.copy()
+            )
+
+            gpx_display[
+                "negative_time"
+            ] = gpx_display[
+                "negative_time_magnitude_s"
+            ].map(
+                format_seconds
+            )
+
+            gpx_display[
+                "final_cumulative_time"
+            ] = gpx_display[
+                "final_cumulative_time_s"
+            ].map(
+                format_seconds
+            )
+
+            st.dataframe(
+                gpx_display[
+                    [
+                        "model",
+                        "negative_segments",
+                        "negative_time",
+                        "final_cumulative_time",
+                    ]
+                ],
+                width="stretch",
+            )
+
+        # ---------------------------------------------------------------------
+        # Detailed GPX model comparison
+        # ---------------------------------------------------------------------
+
+        gpx_comparison = (
+            macro_model_comparison.get(
+                "gpx"
+            )
+        )
+
+        if (
+            gpx_comparison is not None
+            and not gpx_comparison.empty
+        ):
+
+            with st.expander(
+                "Detailed GPX Macro Model comparison",
+                expanded=False,
+            ):
+
+                st.dataframe(
+                    gpx_comparison.head(500),
+                    width="stretch",
+                )
+
+                st.download_button(
+                    "Download Macro Model comparison",
+                    data=gpx_comparison.to_csv(
+                        index=False
+                    ),
+                    file_name=(
+                        "macro_model_1_vs_macro_model_2.csv"
+                    ),
+                    mime="text/csv",
+                    key="download_macro_comparison",
+                )
+
+    # =========================================================================
+    # B. Existing simulation diagnostics
+    # =========================================================================
+
+    if simulation_diagnostics is not None:
+
+        # ---------------------------------------------------------------------
+        # Cumulative macro vs micro
+        # ---------------------------------------------------------------------
+
+        divergence_df = (
+            simulation_diagnostics.get(
+                "simulation_divergence"
+            )
+        )
+
+        if (
+            divergence_df is not None
+            and not divergence_df.empty
+        ):
+
+            st.subheader(
+                "Cumulative macro vs micro"
+            )
+
+            chart_df = divergence_df[
                 [
                     "distance_km",
-                    "micro_minus_macro_cumulative_min",
+                    "macro_cumulative_time_h",
+                    "micro_cumulative_time_h",
                 ]
-            ]
-            .copy()
-            .set_index(
-                "distance_km"
+            ].copy()
+
+            st.line_chart(
+                chart_df.set_index(
+                    "distance_km"
+                )
+            )
+
+            st.subheader(
+                "Micro minus macro cumulative difference"
+            )
+
+            divergence_chart_df = (
+                divergence_df[
+                    [
+                        "distance_km",
+                        "micro_minus_macro_cumulative_min",
+                    ]
+                ]
+                .copy()
+                .set_index(
+                    "distance_km"
+                )
+            )
+
+            st.line_chart(
+                divergence_chart_df
+            )
+
+        # ---------------------------------------------------------------------
+        # Checkpoints
+        # ---------------------------------------------------------------------
+
+        checkpoints_df = (
+            simulation_diagnostics.get(
+                "simulation_checkpoints"
             )
         )
 
-        st.line_chart(
-            divergence_chart_df
+        if (
+            checkpoints_df is not None
+            and not checkpoints_df.empty
+        ):
+
+            st.subheader(
+                "Prediction divergence checkpoints"
+            )
+
+            st.dataframe(
+                checkpoints_df,
+                width="stretch",
+            )
+
+        # ---------------------------------------------------------------------
+        # Course sections
+        # ---------------------------------------------------------------------
+
+        sections_df = (
+            simulation_diagnostics.get(
+                "simulation_sections"
+            )
         )
 
-    # -------------------------------------------------------------------------
-    # Checkpoints
-    # -------------------------------------------------------------------------
+        if (
+            sections_df is not None
+            and not sections_df.empty
+        ):
 
-    checkpoints_df = (
-        simulation_diagnostics.get(
-            "simulation_checkpoints"
-        )
-    )
+            st.subheader(
+                "Prediction divergence by course section"
+            )
 
-    if (
-        checkpoints_df is not None
-        and not checkpoints_df.empty
-    ):
+            st.dataframe(
+                sections_df,
+                width="stretch",
+            )
 
-        st.subheader(
-            "Prediction divergence checkpoints"
-        )
+        # ---------------------------------------------------------------------
+        # Macro clipping diagnostics
+        # ---------------------------------------------------------------------
 
-        st.dataframe(
-            checkpoints_df,
-            width="stretch",
-        )
-
-    # -------------------------------------------------------------------------
-    # Course sections
-    # -------------------------------------------------------------------------
-
-    sections_df = (
-        simulation_diagnostics.get(
-            "simulation_sections"
-        )
-    )
-
-    if (
-        sections_df is not None
-        and not sections_df.empty
-    ):
-
-        st.subheader(
-            "Prediction divergence by course section"
+        clipping_df = (
+            simulation_diagnostics.get(
+                "macro_clipping"
+            )
         )
 
-        st.dataframe(
-            sections_df,
-            width="stretch",
-        )
+        if (
+            clipping_df is not None
+            and not clipping_df.empty
+        ):
 
-    # -------------------------------------------------------------------------
-    # Macro clipping diagnostics
-    # -------------------------------------------------------------------------
+            st.subheader(
+                "Macro clipped segments"
+            )
 
-    clipping_df = (
-        simulation_diagnostics.get(
-            "macro_clipping"
-        )
-    )
+            st.dataframe(
+                clipping_df,
+                width="stretch",
+            )
 
-    if (
-        clipping_df is not None
-        and not clipping_df.empty
-    ):
+        elif (
+            clipping_df is not None
+            and clipping_df.empty
+        ):
 
-        st.subheader(
-            "Macro clipped segments"
-        )
-
-        st.dataframe(
-            clipping_df,
-            width="stretch",
-        )
-
-    elif (
-        clipping_df is not None
-        and clipping_df.empty
-    ):
-
-        st.success(
-            "No macro negative-duration segments were clipped."
-        )
+            st.success(
+                "No macro negative-duration segments were clipped."
+            )
+            
