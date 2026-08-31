@@ -728,7 +728,7 @@ def analyze_uploaded_fit_stops(
 
 
 # =============================================================================
-# Macro Model 1 diagnostics
+# Macro model diagnostics
 # =============================================================================
 
 def build_activity_macro_summary(
@@ -1763,7 +1763,7 @@ def build_leave_one_activity_out_validation(
 
 
 # =============================================================================
-# Macro Model 1 vs Macro Model 2
+# Macro model vs macro_model2
 # =============================================================================
 
 def _macro_model_metrics(
@@ -1837,20 +1837,22 @@ def _macro_model_metrics(
 
 def build_macro_model_comparison(
     learning_df: pd.DataFrame,
+    macro_model,
     gpx_profile_df: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame]:
     """
-    Compare Macro Model 1 and Macro Model 2.
+    Compare the existing macro_model with macro_model2.
 
-    Model 1:
-        existing unconstrained ridge polynomial.
+    macro_model:
+        Existing operational macro model already fitted by app.py.
+        It is passed directly into this diagnostic.
+        It is not refitted or modified.
 
-    Model 2:
-        same basis and variables, but all coefficients >= 0.
+    macro_model2:
+        Experimental non-negative constrained regression fitted
+        independently from the same learning_df.
 
-    Both are fitted on exactly the same historical learning corpus.
-
-    Model 2 is NOT used by the operational simulator here.
+    This function is diagnostic only.
     """
 
     if (
@@ -1862,7 +1864,14 @@ def build_macro_model_comparison(
             "historical": pd.DataFrame(),
             "coefficients": pd.DataFrame(),
             "gpx": pd.DataFrame(),
+            "gpx_summary": pd.DataFrame(),
         }
+
+    if macro_model is None:
+
+        raise ValueError(
+            "macro_model is required for comparison."
+        )
 
     required = [
         "distance_from_start_m",
@@ -1884,14 +1893,19 @@ def build_macro_model_comparison(
             + ", ".join(missing)
         )
 
-    from macro_model import fit_macro_model
-    from macro_model2 import fit_macro_model2
+    # -------------------------------------------------------------------------
+    # IMPORTANT:
+    #
+    # macro_model is the existing model.
+    #
+    # Only macro_model2 is fitted here.
+    # -------------------------------------------------------------------------
 
-    model1 = fit_macro_model(
-        learning_df
+    from macro_model2 import (
+        fit_macro_model2,
     )
 
-    model2 = fit_macro_model2(
+    macro_model2 = fit_macro_model2(
         learning_df
     )
 
@@ -1899,29 +1913,42 @@ def build_macro_model_comparison(
     # Historical corpus comparison
     # =========================================================================
 
-    actual = pd.to_numeric(
-        learning_df[
-            "elapsed_time_s"
-        ],
-        errors="coerce",
-    ).to_numpy(
+    history = learning_df.copy()
+
+    for column in required:
+
+        history[
+            column
+        ] = pd.to_numeric(
+            history[
+                column
+            ],
+            errors="coerce",
+        )
+
+    history = (
+        history.dropna(
+            subset=required
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+
+    if history.empty:
+
+        raise ValueError(
+            "No valid historical rows remain for macro comparison."
+        )
+
+    actual = history[
+        "elapsed_time_s"
+    ].to_numpy(
         dtype=float
     )
 
-    valid_actual = np.isfinite(
-        actual
-    )
-
-    history = learning_df.loc[
-        valid_actual
-    ].copy()
-
-    actual = actual[
-        valid_actual
-    ]
-
-    model1_prediction = (
-        model1.predict_cumulative_time(
+    macro_prediction = (
+        macro_model.predict_cumulative_time(
             history[
                 "distance_from_start_m"
             ],
@@ -1934,8 +1961,8 @@ def build_macro_model_comparison(
         )
     )
 
-    model2_prediction = (
-        model2.predict_cumulative_time(
+    macro_model2_prediction = (
+        macro_model2.predict_cumulative_time(
             history[
                 "distance_from_start_m"
             ],
@@ -1948,69 +1975,71 @@ def build_macro_model_comparison(
         )
     )
 
-    metrics1 = _macro_model_metrics(
+    macro_metrics = _macro_model_metrics(
         actual,
-        model1_prediction,
+        macro_prediction,
     )
 
-    metrics2 = _macro_model_metrics(
+    macro_model2_metrics = _macro_model_metrics(
         actual,
-        model2_prediction,
+        macro_model2_prediction,
     )
+
+    if "activity_id" in history.columns:
+
+        training_activities = int(
+            history[
+                "activity_id"
+            ].nunique()
+        )
+
+    else:
+
+        training_activities = np.nan
 
     historical_comparison = pd.DataFrame(
         [
             {
-                "model": "Macro Model 1",
-                "constraint": "None",
+                "model": "macro_model",
+                "constraint": "current polynomial",
                 "training_rows": int(
                     len(history)
                 ),
-                "training_activities": int(
-                    history[
-                        "activity_id"
-                    ].nunique()
-                )
-                if "activity_id"
-                in history.columns
-                else np.nan,
-                "mae_s": metrics1[
+                "training_activities": (
+                    training_activities
+                ),
+                "mae_s": macro_metrics[
                     "mae_s"
                 ],
-                "rmse_s": metrics1[
+                "rmse_s": macro_metrics[
                     "rmse_s"
                 ],
-                "bias_s": metrics1[
+                "bias_s": macro_metrics[
                     "bias_s"
                 ],
-                "r2": metrics1[
+                "r2": macro_metrics[
                     "r2"
                 ],
             },
             {
-                "model": "Macro Model 2",
-                "constraint": "All coefficients >= 0",
+                "model": "macro_model2",
+                "constraint": "all coefficients >= 0",
                 "training_rows": int(
                     len(history)
                 ),
-                "training_activities": int(
-                    history[
-                        "activity_id"
-                    ].nunique()
-                )
-                if "activity_id"
-                in history.columns
-                else np.nan,
-                "mae_s": metrics2[
+                "training_activities": (
+                    training_activities
+                ),
+                "mae_s": macro_model2_metrics[
                     "mae_s"
                 ],
-                "rmse_s": metrics2[
+                "rmse_s": macro_model2_metrics[
                     "rmse_s"
                 ],
-                "bias_s": metrics2[
+                "bias_s": macro_model2_metrics[
                     "bias_s"
                 ],
-                "r2": metrics2[
+                "r2": macro_model2_metrics[
                     "r2"
                 ],
             },
@@ -2018,40 +2047,87 @@ def build_macro_model_comparison(
     )
 
     # =========================================================================
-    # Coefficient comparison
+    # Coefficients
     # =========================================================================
 
     coefficient_rows: list[
         dict[str, Any]
     ] = []
 
-    for index, feature_name in enumerate(
-        model1.feature_names
+    macro_coefficients = getattr(
+        macro_model,
+        "coefficients",
+        None,
+    )
+
+    macro_feature_names = getattr(
+        macro_model,
+        "feature_names",
+        None,
+    )
+
+    macro_model2_coefficients = getattr(
+        macro_model2,
+        "coefficients",
+        None,
+    )
+
+    macro_model2_feature_names = getattr(
+        macro_model2,
+        "feature_names",
+        None,
+    )
+
+    if (
+        macro_coefficients is not None
+        and macro_feature_names is not None
+        and macro_model2_coefficients is not None
+        and macro_model2_feature_names is not None
     ):
 
-        coefficient_rows.append(
-            {
-                "feature": feature_name,
-                "macro_model1_coefficient": float(
-                    model1.coefficients[
-                        index
-                    ]
-                ),
-                "macro_model2_coefficient": float(
-                    model2.coefficients[
-                        index
-                    ]
-                ),
-                "model2_at_zero": bool(
-                    abs(
-                        model2.coefficients[
-                            index
+        common_features = [
+            feature
+            for feature in macro_model2_feature_names
+            if feature in macro_feature_names
+        ]
+
+        for feature in common_features:
+
+            macro_index = (
+                macro_feature_names.index(
+                    feature
+                )
+            )
+
+            macro_model2_index = (
+                macro_model2_feature_names.index(
+                    feature
+                )
+            )
+
+            coefficient_rows.append(
+                {
+                    "feature": feature,
+                    "macro_model_coefficient": float(
+                        macro_coefficients[
+                            macro_index
                         ]
-                    )
-                    <= 1e-12
-                ),
-            }
-        )
+                    ),
+                    "macro_model2_coefficient": float(
+                        macro_model2_coefficients[
+                            macro_model2_index
+                        ]
+                    ),
+                    "macro_model2_at_zero": bool(
+                        abs(
+                            macro_model2_coefficients[
+                                macro_model2_index
+                            ]
+                        )
+                        <= 1e-12
+                    ),
+                }
+            )
 
     coefficient_comparison = pd.DataFrame(
         coefficient_rows
@@ -2061,270 +2137,254 @@ def build_macro_model_comparison(
     # GPX comparison
     # =========================================================================
 
-    gpx_comparison_rows: list[
-        dict[str, Any]
-    ] = []
-
     if (
-        gpx_profile_df is not None
-        and not gpx_profile_df.empty
+        gpx_profile_df is None
+        or gpx_profile_df.empty
     ):
 
-        gpx_required = [
+        return {
+            "historical": historical_comparison,
+            "coefficients": coefficient_comparison,
+            "gpx": pd.DataFrame(),
+            "gpx_summary": pd.DataFrame(),
+        }
+
+    gpx_required = [
+        "distance_from_start_m",
+        "cumulative_ascent_m",
+        "cumulative_descent_m",
+    ]
+
+    gpx_missing = [
+        column
+        for column in gpx_required
+        if column not in gpx_profile_df.columns
+    ]
+
+    if gpx_missing:
+
+        raise ValueError(
+            "GPX macro comparison missing columns: "
+            + ", ".join(gpx_missing)
+        )
+
+    gpx = (
+        gpx_profile_df.copy()
+        .sort_values(
             "distance_from_start_m",
-            "cumulative_ascent_m",
-            "cumulative_descent_m",
-        ]
-
-        gpx_missing = [
-            column
-            for column in gpx_required
-            if column not in gpx_profile_df.columns
-        ]
-
-        if gpx_missing:
-
-            raise ValueError(
-                "GPX macro comparison missing columns: "
-                + ", ".join(
-                    gpx_missing
-                )
-            )
-
-        gpx = (
-            gpx_profile_df.copy()
-            .sort_values(
-                "distance_from_start_m",
-                kind="mergesort",
-            )
-            .reset_index(
-                drop=True
-            )
+            kind="mergesort",
         )
-
-        model1_cumulative = (
-            model1.predict_cumulative_time(
-                gpx[
-                    "distance_from_start_m"
-                ],
-                gpx[
-                    "cumulative_ascent_m"
-                ],
-                gpx[
-                    "cumulative_descent_m"
-                ],
-            )
+        .reset_index(
+            drop=True
         )
+    )
 
-        model2_cumulative = (
-            model2.predict_cumulative_time(
-                gpx[
-                    "distance_from_start_m"
-                ],
-                gpx[
-                    "cumulative_ascent_m"
-                ],
-                gpx[
-                    "cumulative_descent_m"
-                ],
-            )
+    macro_cumulative = (
+        macro_model.predict_cumulative_time(
+            gpx[
+                "distance_from_start_m"
+            ],
+            gpx[
+                "cumulative_ascent_m"
+            ],
+            gpx[
+                "cumulative_descent_m"
+            ],
         )
+    )
 
-        model1_increment = np.diff(
-            model1_cumulative,
-            prepend=0.0,
+    macro_model2_cumulative = (
+        macro_model2.predict_cumulative_time(
+            gpx[
+                "distance_from_start_m"
+            ],
+            gpx[
+                "cumulative_ascent_m"
+            ],
+            gpx[
+                "cumulative_descent_m"
+            ],
         )
+    )
 
-        model2_increment = np.diff(
-            model2_cumulative,
-            prepend=0.0,
-        )
+    # -------------------------------------------------------------------------
+    # Raw increments.
+    #
+    # IMPORTANT:
+    # No clipping is applied here.
+    #
+    # We want to see the mathematical behaviour of both models.
+    # -------------------------------------------------------------------------
 
-        for index in range(
-            len(gpx)
-        ):
+    macro_increment = np.diff(
+        macro_cumulative,
+        prepend=0.0,
+    )
 
-            gpx_comparison_rows.append(
-                {
-                    "distance_from_start_m": float(
-                        gpx[
-                            "distance_from_start_m"
-                        ].iloc[
-                            index
-                        ]
-                    ),
-                    "distance_km": float(
-                        gpx[
-                            "distance_from_start_m"
-                        ].iloc[
-                            index
-                        ]
-                        / 1000.0
-                    ),
-                    "model1_cumulative_time_s": float(
-                        model1_cumulative[
-                            index
-                        ]
-                    ),
-                    "model2_cumulative_time_s": float(
-                        model2_cumulative[
-                            index
-                        ]
-                    ),
-                    "model1_segment_time_s": float(
-                        model1_increment[
-                            index
-                        ]
-                    ),
-                    "model2_segment_time_s": float(
-                        model2_increment[
-                            index
-                        ]
-                    ),
-                    "model1_negative_increment": bool(
-                        model1_increment[
-                            index
-                        ]
-                        < 0.0
-                    ),
-                    "model2_negative_increment": bool(
-                        model2_increment[
-                            index
-                        ]
-                        < 0.0
-                    ),
-                    "model1_model2_difference_s": float(
-                        model2_cumulative[
-                            index
-                        ]
-                        - model1_cumulative[
-                            index
-                        ]
-                    ),
-                }
-            )
+    macro_model2_increment = np.diff(
+        macro_model2_cumulative,
+        prepend=0.0,
+    )
 
     gpx_comparison = pd.DataFrame(
-        gpx_comparison_rows
+        {
+            "distance_from_start_m": (
+                gpx[
+                    "distance_from_start_m"
+                ].to_numpy(
+                    dtype=float
+                )
+            ),
+
+            "distance_km": (
+                gpx[
+                    "distance_from_start_m"
+                ].to_numpy(
+                    dtype=float
+                )
+                / 1000.0
+            ),
+
+            "macro_model_cumulative_time_s": (
+                macro_cumulative
+            ),
+
+            "macro_model2_cumulative_time_s": (
+                macro_model2_cumulative
+            ),
+
+            "macro_model_segment_time_s": (
+                macro_increment
+            ),
+
+            "macro_model2_segment_time_s": (
+                macro_model2_increment
+            ),
+        }
+    )
+
+    gpx_comparison[
+        "macro_model_negative_increment"
+    ] = (
+        gpx_comparison[
+            "macro_model_segment_time_s"
+        ]
+        < 0.0
+    )
+
+    gpx_comparison[
+        "macro_model2_negative_increment"
+    ] = (
+        gpx_comparison[
+            "macro_model2_segment_time_s"
+        ]
+        < 0.0
+    )
+
+    gpx_comparison[
+        "macro_model2_minus_macro_model_cumulative_s"
+    ] = (
+        gpx_comparison[
+            "macro_model2_cumulative_time_s"
+        ]
+        - gpx_comparison[
+            "macro_model_cumulative_time_s"
+        ]
     )
 
     # =========================================================================
-    # Attach model-level GPX summary
+    # GPX summary
     # =========================================================================
 
-    if not gpx_comparison.empty:
+    macro_negative = (
+        macro_increment
+        < 0.0
+    )
 
-        model1_increment_array = (
-            gpx_comparison[
-                "model1_segment_time_s"
-            ].to_numpy(
-                dtype=float
-            )
-        )
+    macro_model2_negative = (
+        macro_model2_increment
+        < 0.0
+    )
 
-        model2_increment_array = (
-            gpx_comparison[
-                "model2_segment_time_s"
-            ].to_numpy(
-                dtype=float
-            )
-        )
+    macro_negative_time_s = float(
+        np.abs(
+            macro_increment[
+                macro_negative
+            ]
+        ).sum()
+    )
 
-        model1_negative = (
-            model1_increment_array
-            < 0.0
-        )
+    macro_model2_negative_time_s = float(
+        np.abs(
+            macro_model2_increment[
+                macro_model2_negative
+            ]
+        ).sum()
+    )
 
-        model2_negative = (
-            model2_increment_array
-            < 0.0
-        )
+    macro_final_s = float(
+        macro_cumulative[
+            -1
+        ]
+    )
 
-        model1_negative_total_s = float(
-            np.abs(
-                model1_increment_array[
-                    model1_negative
-                ]
-            ).sum()
-        )
+    macro_model2_final_s = float(
+        macro_model2_cumulative[
+            -1
+        ]
+    )
 
-        model2_negative_total_s = float(
-            np.abs(
-                model2_increment_array[
-                    model2_negative
-                ]
-            ).sum()
-        )
-
-        model1_gpx_final_s = float(
-            gpx_comparison[
-                "model1_cumulative_time_s"
-            ].iloc[-1]
-        )
-
-        model2_gpx_final_s = float(
-            gpx_comparison[
-                "model2_cumulative_time_s"
-            ].iloc[-1]
-        )
-
-        gpx_summary_rows = [
+    gpx_summary = pd.DataFrame(
+        [
             {
-                "model": "Macro Model 1",
+                "model": "macro_model",
                 "negative_segments": int(
-                    model1_negative.sum()
+                    macro_negative.sum()
                 ),
                 "negative_time_magnitude_s": (
-                    model1_negative_total_s
+                    macro_negative_time_s
                 ),
                 "negative_time_magnitude_min": (
-                    model1_negative_total_s
+                    macro_negative_time_s
                     / 60.0
                 ),
                 "final_cumulative_time_s": (
-                    model1_gpx_final_s
+                    macro_final_s
                 ),
                 "final_cumulative_time_min": (
-                    model1_gpx_final_s
+                    macro_final_s
                     / 60.0
                 ),
                 "final_cumulative_time_h": (
-                    model1_gpx_final_s
+                    macro_final_s
                     / 3600.0
                 ),
             },
             {
-                "model": "Macro Model 2",
+                "model": "macro_model2",
                 "negative_segments": int(
-                    model2_negative.sum()
+                    macro_model2_negative.sum()
                 ),
                 "negative_time_magnitude_s": (
-                    model2_negative_total_s
+                    macro_model2_negative_time_s
                 ),
                 "negative_time_magnitude_min": (
-                    model2_negative_total_s
+                    macro_model2_negative_time_s
                     / 60.0
                 ),
                 "final_cumulative_time_s": (
-                    model2_gpx_final_s
+                    macro_model2_final_s
                 ),
                 "final_cumulative_time_min": (
-                    model2_gpx_final_s
+                    macro_model2_final_s
                     / 60.0
                 ),
                 "final_cumulative_time_h": (
-                    model2_gpx_final_s
+                    macro_model2_final_s
                     / 3600.0
                 ),
             },
         ]
-
-    else:
-
-        gpx_summary_rows = []
-
-    gpx_summary = pd.DataFrame(
-        gpx_summary_rows
     )
 
     return {
