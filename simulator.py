@@ -9,9 +9,18 @@ from aid_stations import (
     aid_station_stop_seconds,
     get_aid_station_at_profile_row,
 )
-from config import GPX_SEGMENT_LENGTH_M
-from macro_model import MacroModel
-from micro_model import MicroModel
+
+from config import (
+    GPX_SEGMENT_LENGTH_M,
+)
+
+from macro_model import (
+    MacroModel,
+)
+
+from micro_model import (
+    MicroModel,
+)
 
 
 # =============================================================================
@@ -33,12 +42,12 @@ from micro_model import MicroModel
 #
 # For every segment:
 #
-#     1. determine the terrain state at the segment start;
+#     1. determine terrain state at segment start;
 #     2. predict with macro;
 #     3. predict with micro;
 #     4. record arrival times;
 #     5. process any aid-station stop;
-#     6. advance both clocks;
+#     6. advance both cumulative clocks;
 #     7. continue to the next segment.
 #
 # Macro and micro remain independent.
@@ -48,10 +57,13 @@ from micro_model import MicroModel
 #
 # IMPORTANT:
 #
-# The cumulative simulation clocks already include aid-station stops.
-# Therefore the final race time is the final departure clock.
+# Both cumulative simulation clocks include aid-station stops after they occur.
 #
-# We must NOT add total_aid_stop_s again at the end.
+# Therefore:
+#
+#     final race time = final departure clock
+#
+# There is NO second addition of total aid-station time at the end.
 #
 # -----------------------------------------------------------------------------
 # MACRO PHYSICAL CONSTRAINT
@@ -73,7 +85,7 @@ from micro_model import MicroModel
 
 
 # =============================================================================
-# Required profile columns
+# Required GPX profile columns
 # =============================================================================
 
 REQUIRED_PROFILE_COLUMNS = [
@@ -114,7 +126,9 @@ def _validate_profile(
     if missing:
         raise ValueError(
             "GPX profile is missing required columns: "
-            + ", ".join(missing)
+            + ", ".join(
+                missing
+            )
         )
 
     distance = pd.to_numeric(
@@ -129,19 +143,17 @@ def _validate_profile(
     if not np.isfinite(
         distance
     ).all():
-
         raise ValueError(
             "GPX profile contains invalid distance values."
         )
 
     if len(distance) == 0:
-
         raise ValueError(
             "GPX profile contains no segments."
         )
 
     # -------------------------------------------------------------------------
-    # First row is the end of the first segment.
+    # First row is the END of the first GPX segment.
     # -------------------------------------------------------------------------
 
     expected_first = float(
@@ -195,6 +207,8 @@ def _get_segment_start_state(
 ) -> dict[str, float]:
     """
     Return terrain state at the beginning of one segment.
+
+    Profile rows represent segment endpoints.
     """
 
     if row_index == 0:
@@ -245,8 +259,8 @@ def _predict_macro_segment(
 
     Returns:
 
-        constrained segment time
-        raw unconstrained segment time
+        constrained macro segment time
+        raw unconstrained macro segment time
     """
 
     start_prediction = (
@@ -356,10 +370,8 @@ def _predict_micro_segment(
     """
     Predict one GPX segment with the micro analogue model.
 
-    The micro model receives the cumulative simulated micro elapsed time at the
-    beginning of this segment.
-
-    That value includes all previously incurred aid-station stops.
+    The micro model receives the current cumulative simulated micro elapsed
+    time, including all aid-station stops already encountered.
     """
 
     prediction = micro_model.predict_one(
@@ -439,13 +451,12 @@ def simulate_race(
     Each iteration represents exactly one
     GPX_SEGMENT_LENGTH_M transition.
 
-    Macro and micro have independent cumulative clocks.
+    Macro and micro maintain independent cumulative clocks.
 
     Aid-station time is added AFTER arrival to BOTH clocks.
 
-    Because the clocks are cumulative, the final race time is already the
-    final departure clock. It must NOT receive total aid-station time a second
-    time.
+    The cumulative clocks therefore already contain all previously encountered
+    aid-station stops.
     """
 
     if macro_model is None:
@@ -477,9 +488,9 @@ def simulate_race(
     )
 
     # -------------------------------------------------------------------------
-    # Independent cumulative simulation clocks.
+    # Cumulative clocks.
     #
-    # Both clocks include aid-station stops after they occur.
+    # Both include aid-station stops after the station has been reached.
     # -------------------------------------------------------------------------
 
     macro_elapsed_s = 0.0
@@ -613,7 +624,7 @@ def simulate_race(
         # =====================================================================
         # DEPARTURE TIMES
         #
-        # These become the cumulative clocks for the next iteration.
+        # These become the cumulative clocks for the next segment.
         # =====================================================================
 
         macro_departure_s = (
@@ -699,7 +710,7 @@ def simulate_race(
                 ),
 
                 # -----------------------------------------------------------------
-                # Macro prediction
+                # Macro
                 # -----------------------------------------------------------------
 
                 "raw_macro_predicted_time_s": (
@@ -715,7 +726,7 @@ def simulate_race(
                 ),
 
                 # -----------------------------------------------------------------
-                # Micro prediction
+                # Micro
                 # -----------------------------------------------------------------
 
                 "micro_predicted_time_s": (
@@ -849,7 +860,7 @@ def simulate_race(
         )
 
         # =====================================================================
-        # ADVANCE BOTH CLOCKS
+        # ADVANCE BOTH CUMULATIVE CLOCKS
         # =====================================================================
 
         macro_elapsed_s = (
@@ -901,12 +912,15 @@ def simulate_race(
     )
 
     # -------------------------------------------------------------------------
-    # IMPORTANT:
+    # CRITICAL:
     #
-    # Final arrival is NOT the final race time if an aid station occurs on the
-    # final profile row. The final DEPARTURE clock is the actual race clock.
+    # Final race time is the FINAL CUMULATIVE DEPARTURE CLOCK.
     #
-    # There is NO additional + total_aid_stop_s here.
+    # Do NOT do:
+    #
+    #     final_arrival + total_aid_stop_s
+    #
+    # because that would add all previous aid stops a second time.
     # -------------------------------------------------------------------------
 
     macro_final_race_s = float(
@@ -922,7 +936,7 @@ def simulate_race(
     )
 
     # -------------------------------------------------------------------------
-    # Macro clipping diagnostics
+    # Macro clipping diagnostics.
     # -------------------------------------------------------------------------
 
     macro_clipped_mask = (
@@ -944,10 +958,6 @@ def simulate_race(
         .sum()
     )
 
-    # -------------------------------------------------------------------------
-    # Number of actual aid-station events.
-    # -------------------------------------------------------------------------
-
     total_aid_stops = int(
         (
             simulation_df[
@@ -958,11 +968,11 @@ def simulate_race(
     )
 
     # -------------------------------------------------------------------------
-    # Sanity check:
+    # Final-clock consistency checks.
     #
-    # Final race time must equal final arrival time plus only the stop occurring
-    # on the final row, because all earlier stops are already included in the
-    # cumulative arrival clock.
+    # Usually the final row has no aid station, so arrival == departure.
+    # If there is an aid station on the final endpoint, departure includes
+    # exactly that final stop.
     # -------------------------------------------------------------------------
 
     final_row_stop_s = float(
@@ -971,10 +981,19 @@ def simulate_race(
         ]
     )
 
+    expected_macro_final_race_s = (
+        macro_final_arrival_s
+        + final_row_stop_s
+    )
+
+    expected_micro_final_race_s = (
+        micro_final_arrival_s
+        + final_row_stop_s
+    )
+
     if not np.isclose(
         macro_final_race_s,
-        macro_final_arrival_s
-        + final_row_stop_s,
+        expected_macro_final_race_s,
         atol=1e-9,
         rtol=0.0,
     ):
@@ -985,8 +1004,7 @@ def simulate_race(
 
     if not np.isclose(
         micro_final_race_s,
-        micro_final_arrival_s
-        + final_row_stop_s,
+        expected_micro_final_race_s,
         atol=1e-9,
         rtol=0.0,
     ):
@@ -1038,8 +1056,7 @@ def simulate_race(
         ),
 
         # ---------------------------------------------------------------------
-        # Final race clocks.
-        # These already include all aid-station stops.
+        # Final cumulative race clocks.
         # ---------------------------------------------------------------------
 
         "macro_final_race_s": (
@@ -1267,6 +1284,12 @@ def build_aid_station_summary(
 ) -> pd.DataFrame:
     """
     Extract arrival/departure predictions at aid stations.
+
+    Arrival:
+        before the station stop
+
+    Departure:
+        after the station stop
     """
 
     if (
@@ -1315,3 +1338,4 @@ def build_aid_station_summary(
     ].reset_index(
         drop=True
     )
+    
