@@ -29,6 +29,7 @@ def build_learning_diagnostic_sample(
     random_sample_size: int = RANDOM_SAMPLE_SIZE,
     extreme_sample_size: int = 100,
 ) -> pd.DataFrame:
+
     if learning_df is None or learning_df.empty:
         return pd.DataFrame()
 
@@ -116,6 +117,7 @@ def build_learning_diagnostic_sample(
 def build_activity_learning_summary(
     learning_df: pd.DataFrame,
 ) -> pd.DataFrame:
+
     if learning_df is None or learning_df.empty:
         return pd.DataFrame()
 
@@ -238,6 +240,7 @@ def build_extreme_transition_summary(
     learning_df: pd.DataFrame,
     n_each: int = EXTREME_SAMPLE_SIZE,
 ) -> pd.DataFrame:
+
     if learning_df is None or learning_df.empty:
         return pd.DataFrame()
 
@@ -347,9 +350,12 @@ def build_extreme_transition_summary(
 def _extract_raw_time_distance(
     uploaded_file,
 ) -> pd.DataFrame:
+
     uploaded_file.seek(0)
 
-    rows: list[dict[str, Any]] = []
+    rows: list[
+        dict[str, Any]
+    ] = []
 
     with fitdecode.FitReader(
         uploaded_file
@@ -439,6 +445,7 @@ def _extract_raw_time_distance(
 def _build_stationary_intervals(
     raw_df: pd.DataFrame,
 ) -> pd.DataFrame:
+
     if raw_df is None or raw_df.empty:
         return pd.DataFrame()
 
@@ -721,7 +728,7 @@ def analyze_uploaded_fit_stops(
 
 
 # =============================================================================
-# Macro diagnostics
+# Macro Model 1 diagnostics
 # =============================================================================
 
 def build_activity_macro_summary(
@@ -761,7 +768,9 @@ def build_activity_macro_summary(
             + ", ".join(missing)
         )
 
-    rows: list[dict[str, Any]] = []
+    rows: list[
+        dict[str, Any]
+    ] = []
 
     for (
         activity_id,
@@ -1089,13 +1098,14 @@ def _select_non_overlapping_test_rows(
     activity_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Select historical rows at multiples of GPX_SEGMENT_LENGTH_M.
+    Select non-overlapping validation starting positions.
 
-    The underlying learning database remains densely sampled according to
+    The historical learning database remains densely sampled every
     LEARNING_STEP_M.
 
-    This function creates the non-overlapping validation trajectory only.
+    This function is only for development validation.
     """
+
     if (
         activity_df is None
         or activity_df.empty
@@ -1120,6 +1130,7 @@ def _select_non_overlapping_test_rows(
     ]
 
     if missing:
+
         raise ValueError(
             "Held-out validation missing columns: "
             + ", ".join(missing)
@@ -1142,10 +1153,10 @@ def _select_non_overlapping_test_rows(
         ]
     ).copy()
 
-    distances = (
-        df[
-            "distance_from_start_m"
-        ].round()
+    distances = df[
+        "distance_from_start_m"
+    ].to_numpy(
+        dtype=float
     )
 
     is_multiple = np.isclose(
@@ -1154,7 +1165,7 @@ def _select_non_overlapping_test_rows(
             GPX_SEGMENT_LENGTH_M,
         ),
         0.0,
-        atol=1e-9,
+        atol=1e-6,
     )
 
     return (
@@ -1266,28 +1277,22 @@ def _predict_held_out_activity_macro(
         training_df
     )
 
-    current_distance = (
-        test_df[
-            "distance_from_start_m"
-        ].to_numpy(
-            dtype=float
-        )
+    current_distance = test_df[
+        "distance_from_start_m"
+    ].to_numpy(
+        dtype=float
     )
 
-    current_ascent = (
-        test_df[
-            "cumulative_ascent_m"
-        ].to_numpy(
-            dtype=float
-        )
+    current_ascent = test_df[
+        "cumulative_ascent_m"
+    ].to_numpy(
+        dtype=float
     )
 
-    current_descent = (
-        test_df[
-            "cumulative_descent_m"
-        ].to_numpy(
-            dtype=float
-        )
+    current_descent = test_df[
+        "cumulative_descent_m"
+    ].to_numpy(
+        dtype=float
     )
 
     future_ascent = (
@@ -1375,19 +1380,12 @@ def build_leave_one_activity_out_validation(
     pd.DataFrame,
     pd.DataFrame,
 ]:
-    """
-    Development-only leave-one-FIT-out validation.
 
-    Training:
-        all dense historical transitions from every other FIT.
-
-    Test:
-        non-overlapping GPX_SEGMENT_LENGTH_M transitions from the held-out FIT.
-    """
     if (
         learning_df is None
         or learning_df.empty
     ):
+
         return (
             pd.DataFrame(),
             pd.DataFrame(),
@@ -1632,44 +1630,28 @@ def build_leave_one_activity_out_validation(
             )
         )
 
-        actual_elapsed_at_last_test_start = float(
-            test_df[
-                "elapsed_time_s"
-            ].iloc[-1]
-        )
-
-        actual_elapsed_after_last_test = (
-            actual_elapsed_at_last_test_start
-            + actual[-1]
-        )
-
         summary_rows.append(
             {
                 "activity_id": held_out_id,
                 "activity_name": held_out_name,
-
                 "segment_length_m": (
                     GPX_SEGMENT_LENGTH_M
                 ),
-
                 "training_activities": int(
                     training_df[
                         "activity_id"
                     ].nunique()
                 ),
-
                 "training_rows": int(
                     len(
                         training_df
                     )
                 ),
-
                 "test_segments": int(
                     len(
                         test_df
                     )
                 ),
-
                 "micro_mae_s": float(
                     np.mean(
                         np.abs(
@@ -1677,7 +1659,6 @@ def build_leave_one_activity_out_validation(
                         )
                     )
                 ),
-
                 "macro_mae_s": float(
                     np.mean(
                         np.abs(
@@ -1685,7 +1666,6 @@ def build_leave_one_activity_out_validation(
                         )
                     )
                 ),
-
                 "micro_median_abs_error_s": float(
                     np.median(
                         np.abs(
@@ -1693,7 +1673,6 @@ def build_leave_one_activity_out_validation(
                         )
                     )
                 ),
-
                 "macro_median_abs_error_s": float(
                     np.median(
                         np.abs(
@@ -1701,83 +1680,58 @@ def build_leave_one_activity_out_validation(
                         )
                     )
                 ),
-
                 "micro_bias_s": float(
                     np.mean(
                         micro_error
                     )
                 ),
-
                 "macro_bias_s": float(
                     np.mean(
                         macro_error
                     )
                 ),
-
                 "mean_micro_minus_macro_s": float(
                     np.mean(
                         micro_minus_macro
                     )
                 ),
-
                 "median_micro_minus_macro_s": float(
                     np.median(
                         micro_minus_macro
                     )
                 ),
-
-                "mean_abs_micro_minus_macro_s": float(
-                    np.mean(
-                        np.abs(
-                            micro_minus_macro
-                        )
-                    )
-                ),
-
                 "actual_test_time_total_s": (
                     actual_total
                 ),
-
                 "micro_predicted_total_time_s": (
                     micro_total
                 ),
-
                 "macro_predicted_total_time_s": (
                     macro_total
                 ),
-
                 "micro_finish_error_s": (
                     micro_total
                     - actual_total
                 ),
-
                 "macro_finish_error_s": (
                     macro_total
                     - actual_total
                 ),
-
                 "micro_finish_error_min": (
                     micro_total
                     - actual_total
                 )
                 / 60.0,
-
                 "macro_finish_error_min": (
                     macro_total
                     - actual_total
                 )
                 / 60.0,
-
-                "actual_elapsed_after_last_test_s": (
-                    actual_elapsed_after_last_test
-                ),
-
                 "last_test_start_distance_m": float(
                     test_df[
                         "distance_from_start_m"
                     ].iloc[-1]
                 ),
-
                 "last_test_end_distance_m": float(
                     test_df[
                         "distance_from_start_m"
@@ -1809,26 +1763,586 @@ def build_leave_one_activity_out_validation(
 
 
 # =============================================================================
+# Macro Model 1 vs Macro Model 2
+# =============================================================================
+
+def _macro_model_metrics(
+    actual: np.ndarray,
+    predicted: np.ndarray,
+) -> dict[str, float]:
+
+    residuals = (
+        predicted
+        - actual
+    )
+
+    mae = float(
+        np.mean(
+            np.abs(
+                residuals
+            )
+        )
+    )
+
+    rmse = float(
+        np.sqrt(
+            np.mean(
+                residuals ** 2
+            )
+        )
+    )
+
+    bias = float(
+        np.mean(
+            residuals
+        )
+    )
+
+    ss_res = float(
+        np.sum(
+            residuals ** 2
+        )
+    )
+
+    ss_tot = float(
+        np.sum(
+            (
+                actual
+                - np.mean(
+                    actual
+                )
+            ) ** 2
+        )
+    )
+
+    if ss_tot > 0.0:
+
+        r2 = float(
+            1.0
+            - ss_res
+            / ss_tot
+        )
+
+    else:
+
+        r2 = np.nan
+
+    return {
+        "mae_s": mae,
+        "rmse_s": rmse,
+        "bias_s": bias,
+        "r2": r2,
+    }
+
+
+def build_macro_model_comparison(
+    learning_df: pd.DataFrame,
+    gpx_profile_df: pd.DataFrame | None = None,
+) -> dict[str, pd.DataFrame]:
+    """
+    Compare Macro Model 1 and Macro Model 2.
+
+    Model 1:
+        existing unconstrained ridge polynomial.
+
+    Model 2:
+        same basis and variables, but all coefficients >= 0.
+
+    Both are fitted on exactly the same historical learning corpus.
+
+    Model 2 is NOT used by the operational simulator here.
+    """
+
+    if (
+        learning_df is None
+        or learning_df.empty
+    ):
+
+        return {
+            "historical": pd.DataFrame(),
+            "coefficients": pd.DataFrame(),
+            "gpx": pd.DataFrame(),
+        }
+
+    required = [
+        "distance_from_start_m",
+        "cumulative_ascent_m",
+        "cumulative_descent_m",
+        "elapsed_time_s",
+    ]
+
+    missing = [
+        column
+        for column in required
+        if column not in learning_df.columns
+    ]
+
+    if missing:
+
+        raise ValueError(
+            "Macro comparison missing columns: "
+            + ", ".join(missing)
+        )
+
+    from macro_model import fit_macro_model
+    from macro_model2 import fit_macro_model2
+
+    model1 = fit_macro_model(
+        learning_df
+    )
+
+    model2 = fit_macro_model2(
+        learning_df
+    )
+
+    # =========================================================================
+    # Historical corpus comparison
+    # =========================================================================
+
+    actual = pd.to_numeric(
+        learning_df[
+            "elapsed_time_s"
+        ],
+        errors="coerce",
+    ).to_numpy(
+        dtype=float
+    )
+
+    valid_actual = np.isfinite(
+        actual
+    )
+
+    history = learning_df.loc[
+        valid_actual
+    ].copy()
+
+    actual = actual[
+        valid_actual
+    ]
+
+    model1_prediction = (
+        model1.predict_cumulative_time(
+            history[
+                "distance_from_start_m"
+            ],
+            history[
+                "cumulative_ascent_m"
+            ],
+            history[
+                "cumulative_descent_m"
+            ],
+        )
+    )
+
+    model2_prediction = (
+        model2.predict_cumulative_time(
+            history[
+                "distance_from_start_m"
+            ],
+            history[
+                "cumulative_ascent_m"
+            ],
+            history[
+                "cumulative_descent_m"
+            ],
+        )
+    )
+
+    metrics1 = _macro_model_metrics(
+        actual,
+        model1_prediction,
+    )
+
+    metrics2 = _macro_model_metrics(
+        actual,
+        model2_prediction,
+    )
+
+    historical_comparison = pd.DataFrame(
+        [
+            {
+                "model": "Macro Model 1",
+                "constraint": "None",
+                "training_rows": int(
+                    len(history)
+                ),
+                "training_activities": int(
+                    history[
+                        "activity_id"
+                    ].nunique()
+                )
+                if "activity_id"
+                in history.columns
+                else np.nan,
+                "mae_s": metrics1[
+                    "mae_s"
+                ],
+                "rmse_s": metrics1[
+                    "rmse_s"
+                ],
+                "bias_s": metrics1[
+                    "bias_s"
+                ],
+                "r2": metrics1[
+                    "r2"
+                ],
+            },
+            {
+                "model": "Macro Model 2",
+                "constraint": "All coefficients >= 0",
+                "training_rows": int(
+                    len(history)
+                ),
+                "training_activities": int(
+                    history[
+                        "activity_id"
+                    ].nunique()
+                )
+                if "activity_id"
+                in history.columns
+                else np.nan,
+                "mae_s": metrics2[
+                    "mae_s"
+                ],
+                "rmse_s": metrics2[
+                    "rmse_s"
+                ],
+                "bias_s": metrics2[
+                    "bias_s"
+                ],
+                "r2": metrics2[
+                    "r2"
+                ],
+            },
+        ]
+    )
+
+    # =========================================================================
+    # Coefficient comparison
+    # =========================================================================
+
+    coefficient_rows: list[
+        dict[str, Any]
+    ] = []
+
+    for index, feature_name in enumerate(
+        model1.feature_names
+    ):
+
+        coefficient_rows.append(
+            {
+                "feature": feature_name,
+                "macro_model1_coefficient": float(
+                    model1.coefficients[
+                        index
+                    ]
+                ),
+                "macro_model2_coefficient": float(
+                    model2.coefficients[
+                        index
+                    ]
+                ),
+                "model2_at_zero": bool(
+                    abs(
+                        model2.coefficients[
+                            index
+                        ]
+                    )
+                    <= 1e-12
+                ),
+            }
+        )
+
+    coefficient_comparison = pd.DataFrame(
+        coefficient_rows
+    )
+
+    # =========================================================================
+    # GPX comparison
+    # =========================================================================
+
+    gpx_comparison_rows: list[
+        dict[str, Any]
+    ] = []
+
+    if (
+        gpx_profile_df is not None
+        and not gpx_profile_df.empty
+    ):
+
+        gpx_required = [
+            "distance_from_start_m",
+            "cumulative_ascent_m",
+            "cumulative_descent_m",
+        ]
+
+        gpx_missing = [
+            column
+            for column in gpx_required
+            if column not in gpx_profile_df.columns
+        ]
+
+        if gpx_missing:
+
+            raise ValueError(
+                "GPX macro comparison missing columns: "
+                + ", ".join(
+                    gpx_missing
+                )
+            )
+
+        gpx = (
+            gpx_profile_df.copy()
+            .sort_values(
+                "distance_from_start_m",
+                kind="mergesort",
+            )
+            .reset_index(
+                drop=True
+            )
+        )
+
+        model1_cumulative = (
+            model1.predict_cumulative_time(
+                gpx[
+                    "distance_from_start_m"
+                ],
+                gpx[
+                    "cumulative_ascent_m"
+                ],
+                gpx[
+                    "cumulative_descent_m"
+                ],
+            )
+        )
+
+        model2_cumulative = (
+            model2.predict_cumulative_time(
+                gpx[
+                    "distance_from_start_m"
+                ],
+                gpx[
+                    "cumulative_ascent_m"
+                ],
+                gpx[
+                    "cumulative_descent_m"
+                ],
+            )
+        )
+
+        model1_increment = np.diff(
+            model1_cumulative,
+            prepend=0.0,
+        )
+
+        model2_increment = np.diff(
+            model2_cumulative,
+            prepend=0.0,
+        )
+
+        for index in range(
+            len(gpx)
+        ):
+
+            gpx_comparison_rows.append(
+                {
+                    "distance_from_start_m": float(
+                        gpx[
+                            "distance_from_start_m"
+                        ].iloc[
+                            index
+                        ]
+                    ),
+                    "distance_km": float(
+                        gpx[
+                            "distance_from_start_m"
+                        ].iloc[
+                            index
+                        ]
+                        / 1000.0
+                    ),
+                    "model1_cumulative_time_s": float(
+                        model1_cumulative[
+                            index
+                        ]
+                    ),
+                    "model2_cumulative_time_s": float(
+                        model2_cumulative[
+                            index
+                        ]
+                    ),
+                    "model1_segment_time_s": float(
+                        model1_increment[
+                            index
+                        ]
+                    ),
+                    "model2_segment_time_s": float(
+                        model2_increment[
+                            index
+                        ]
+                    ),
+                    "model1_negative_increment": bool(
+                        model1_increment[
+                            index
+                        ]
+                        < 0.0
+                    ),
+                    "model2_negative_increment": bool(
+                        model2_increment[
+                            index
+                        ]
+                        < 0.0
+                    ),
+                    "model1_model2_difference_s": float(
+                        model2_cumulative[
+                            index
+                        ]
+                        - model1_cumulative[
+                            index
+                        ]
+                    ),
+                }
+            )
+
+    gpx_comparison = pd.DataFrame(
+        gpx_comparison_rows
+    )
+
+    # =========================================================================
+    # Attach model-level GPX summary
+    # =========================================================================
+
+    if not gpx_comparison.empty:
+
+        model1_increment_array = (
+            gpx_comparison[
+                "model1_segment_time_s"
+            ].to_numpy(
+                dtype=float
+            )
+        )
+
+        model2_increment_array = (
+            gpx_comparison[
+                "model2_segment_time_s"
+            ].to_numpy(
+                dtype=float
+            )
+        )
+
+        model1_negative = (
+            model1_increment_array
+            < 0.0
+        )
+
+        model2_negative = (
+            model2_increment_array
+            < 0.0
+        )
+
+        model1_negative_total_s = float(
+            np.abs(
+                model1_increment_array[
+                    model1_negative
+                ]
+            ).sum()
+        )
+
+        model2_negative_total_s = float(
+            np.abs(
+                model2_increment_array[
+                    model2_negative
+                ]
+            ).sum()
+        )
+
+        model1_gpx_final_s = float(
+            gpx_comparison[
+                "model1_cumulative_time_s"
+            ].iloc[-1]
+        )
+
+        model2_gpx_final_s = float(
+            gpx_comparison[
+                "model2_cumulative_time_s"
+            ].iloc[-1]
+        )
+
+        gpx_summary_rows = [
+            {
+                "model": "Macro Model 1",
+                "negative_segments": int(
+                    model1_negative.sum()
+                ),
+                "negative_time_magnitude_s": (
+                    model1_negative_total_s
+                ),
+                "negative_time_magnitude_min": (
+                    model1_negative_total_s
+                    / 60.0
+                ),
+                "final_cumulative_time_s": (
+                    model1_gpx_final_s
+                ),
+                "final_cumulative_time_min": (
+                    model1_gpx_final_s
+                    / 60.0
+                ),
+                "final_cumulative_time_h": (
+                    model1_gpx_final_s
+                    / 3600.0
+                ),
+            },
+            {
+                "model": "Macro Model 2",
+                "negative_segments": int(
+                    model2_negative.sum()
+                ),
+                "negative_time_magnitude_s": (
+                    model2_negative_total_s
+                ),
+                "negative_time_magnitude_min": (
+                    model2_negative_total_s
+                    / 60.0
+                ),
+                "final_cumulative_time_s": (
+                    model2_gpx_final_s
+                ),
+                "final_cumulative_time_min": (
+                    model2_gpx_final_s
+                    / 60.0
+                ),
+                "final_cumulative_time_h": (
+                    model2_gpx_final_s
+                    / 3600.0
+                ),
+            },
+        ]
+
+    else:
+
+        gpx_summary_rows = []
+
+    gpx_summary = pd.DataFrame(
+        gpx_summary_rows
+    )
+
+    return {
+        "historical": historical_comparison,
+        "coefficients": coefficient_comparison,
+        "gpx": gpx_comparison,
+        "gpx_summary": gpx_summary,
+    }
+
+
+# =============================================================================
 # Simulation diagnostics
 # =============================================================================
 
 def build_simulation_divergence_diagnostic(
     simulation_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Build a compact diagnostic table showing where macro and micro diverge
-    during the simulated race.
 
-    This function does NOT modify the simulation.
-
-    It exposes:
-
-        distance
-        macro cumulative time
-        micro cumulative time
-        micro - macro cumulative difference
-        segment-level difference
-    """
     if (
         simulation_df is None
         or simulation_df.empty
@@ -1848,43 +2362,40 @@ def build_simulation_divergence_diagnostic(
     ]
 
     if missing:
+
         raise ValueError(
             "Simulation divergence diagnostics missing columns: "
             + ", ".join(missing)
         )
 
-    result = simulation_df[
+    optional_segment_columns = [
+        "macro_predicted_time_s",
+        "micro_predicted_time_s",
+        "micro_minus_macro_s",
+    ]
+
+    result_columns = (
         required
-        + (
-            [
-                "macro_predicted_time_s",
-                "micro_predicted_time_s",
-                "micro_minus_macro_s",
-            ]
-            if all(
-                column in simulation_df.columns
-                for column in [
-                    "macro_predicted_time_s",
-                    "micro_predicted_time_s",
-                    "micro_minus_macro_s",
-                ]
-            )
-            else []
-        )
-        + (
-            [
-                "aid_station_name",
-                "aid_station_stop_min",
-            ]
-            if all(
-                column in simulation_df.columns
-                for column in [
-                    "aid_station_name",
-                    "aid_station_stop_min",
-                ]
-            )
-            else []
-        )
+        + [
+            column
+            for column in optional_segment_columns
+            if column in simulation_df.columns
+        ]
+    )
+
+    optional_aid_columns = [
+        "aid_station_name",
+        "aid_station_stop_min",
+    ]
+
+    result_columns += [
+        column
+        for column in optional_aid_columns
+        if column in simulation_df.columns
+    ]
+
+    result = simulation_df[
+        result_columns
     ].copy()
 
     result[
@@ -1935,15 +2446,7 @@ def build_simulation_divergence_checkpoints(
     simulation_df: pd.DataFrame,
     checkpoint_distances_km: list[float] | None = None,
 ) -> pd.DataFrame:
-    """
-    Extract macro/micro cumulative divergence near selected course
-    checkpoints.
 
-    This is useful for answering:
-
-        Is the final difference accumulating gradually,
-        or is one section responsible for most of it?
-    """
     diagnostic_df = (
         build_simulation_divergence_diagnostic(
             simulation_df
@@ -1979,7 +2482,9 @@ def build_simulation_divergence_checkpoints(
         dtype=float
     )
 
-    for checkpoint_km in checkpoint_distances_km:
+    for checkpoint_km in (
+        checkpoint_distances_km
+    ):
 
         if not np.isfinite(
             checkpoint_km
@@ -2045,11 +2550,7 @@ def build_simulation_divergence_checkpoints(
 def build_macro_clipping_diagnostic(
     simulation_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Diagnose negative raw macro increments that were constrained to zero.
 
-    This does not change the simulation.
-    """
     if (
         simulation_df is None
         or simulation_df.empty
@@ -2070,6 +2571,7 @@ def build_macro_clipping_diagnostic(
     ]
 
     if missing:
+
         raise ValueError(
             "Macro clipping diagnostics missing columns: "
             + ", ".join(missing)
@@ -2082,8 +2584,12 @@ def build_macro_clipping_diagnostic(
     ].copy()
 
     if clipped.empty:
+
         return pd.DataFrame(
             columns=required
+            + [
+                "clipped_correction_s"
+            ]
         )
 
     result = clipped[
@@ -2107,14 +2613,7 @@ def build_macro_clipping_diagnostic(
 def build_simulation_section_summary(
     simulation_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Summarize model differences by coarse course section.
 
-    Sections are diagnostic only.
-
-    Default:
-        10 equal-distance sections.
-    """
     diagnostic_df = (
         build_simulation_divergence_diagnostic(
             simulation_df
@@ -2176,12 +2675,9 @@ def build_simulation_section_summary(
                 ),
                 "mean_segment_difference_s": (
                     float(
-                        group.get(
-                            "micro_minus_macro_s",
-                            pd.Series(
-                                dtype=float
-                            ),
-                        ).mean()
+                        group[
+                            "micro_minus_macro_s"
+                        ].mean()
                     )
                     if "micro_minus_macro_s"
                     in group.columns
@@ -2212,11 +2708,7 @@ def build_simulation_section_summary(
 def build_simulation_diagnostics(
     simulation_df: pd.DataFrame,
 ) -> dict[str, pd.DataFrame]:
-    """
-    Build the complete disposable diagnostics package for one simulation.
 
-    Nothing returned here feeds back into the simulator.
-    """
     divergence = (
         build_simulation_divergence_diagnostic(
             simulation_df
