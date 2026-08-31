@@ -68,18 +68,13 @@ DEFAULT_STATE = {
     "learning_summary": None,
     "macro_model": None,
     "micro_model": None,
-
     "raw_gpx_df": None,
     "gpx_profile_df": None,
-
     "simulation_df": None,
     "race_summary": None,
     "simulation_diagnostics": None,
-
     "macro_model_comparison": None,
-
     "aid_stations": [],
-
     "fit_signature": None,
     "gpx_signature": None,
 }
@@ -421,7 +416,7 @@ if (
 
 
 # =============================================================================
-# Macro model summary
+# Existing macro model summary
 # =============================================================================
 
 if macro_model is not None:
@@ -431,7 +426,7 @@ if macro_model is not None:
     )
 
     st.subheader(
-        "Macro model 1"
+        "Macro model"
     )
 
     col1, col2, col3 = st.columns(3)
@@ -762,9 +757,6 @@ with st.form(
 def _editor_to_dataframe(
     editor_value,
 ) -> pd.DataFrame:
-    """
-    Convert the Streamlit editor value into a DataFrame.
-    """
 
     if editor_value is None:
 
@@ -820,9 +812,6 @@ def _editor_to_dataframe(
 def _read_aid_station_editor(
     editor_value,
 ) -> list[AidStation]:
-    """
-    Convert submitted editor rows to validated AidStation objects.
-    """
 
     editor_df = _editor_to_dataframe(
         editor_value
@@ -886,7 +875,6 @@ def _read_aid_station_editor(
             )
         )
 
-        # Completely blank rows are ignored.
         if (
             name_empty
             and distance_empty
@@ -894,7 +882,6 @@ def _read_aid_station_editor(
         ):
             continue
 
-        # Partially populated rows are invalid.
         if (
             name_empty
             or distance_empty
@@ -966,12 +953,6 @@ if save_aid_stations:
 
         if old_signature != new_signature:
 
-            # -----------------------------------------------------------------
-            # The normalized GPX contains the aid-station mapping, therefore
-            # changing the saved configuration invalidates the profile and
-            # subsequent simulation.
-            # -----------------------------------------------------------------
-
             st.session_state[
                 "gpx_profile_df"
             ] = None
@@ -986,6 +967,10 @@ if save_aid_stations:
 
             st.session_state[
                 "simulation_diagnostics"
+            ] = None
+
+            st.session_state[
+                "macro_model_comparison"
             ] = None
 
         st.success(
@@ -1083,6 +1068,10 @@ if uploaded_gpx_file is not None:
 
             st.session_state[
                 "simulation_diagnostics"
+            ] = None
+
+            st.session_state[
+                "macro_model_comparison"
             ] = None
 
             st.success(
@@ -1551,16 +1540,8 @@ if (
 # =============================================================================
 # 4. TEMPORARY DIAGNOSTICS
 # =============================================================================
-#
-# Everything below this point is disposable.
-#
-# Diagnostic calculations live in diagnostics.py.
-# app.py only orchestrates and displays them.
-# =============================================================================
 
-if (
-    learning_df is not None
-):
+if learning_df is not None:
 
     st.divider()
 
@@ -1569,16 +1550,17 @@ if (
     )
 
     # =========================================================================
-    # A. Macro Model 1 vs Macro Model 2
+    # Macro model comparison
     # =========================================================================
 
     st.subheader(
-        "Macro Model 1 vs Macro Model 2"
+        "Macro model vs macro_model2"
     )
 
-    st.write(
-        "Macro Model 2 is a diagnostic experiment only. "
-        "It does not replace Macro Model 1 in the simulator."
+    st.caption(
+        "macro_model is the existing operational model. "
+        "macro_model2 is the experimental non-negative constrained model. "
+        "macro_model2 does not replace macro_model."
     )
 
     if gpx_profile_df is None:
@@ -1591,24 +1573,21 @@ if (
     else:
 
         if st.button(
-            "Run Macro Model 1 vs Macro Model 2 comparison",
+            "Run macro model comparison",
             key="run_macro_model_comparison",
         ):
 
             try:
 
                 with st.spinner(
-                    "Comparing Macro Model 1 and Macro Model 2..."
+                    "Comparing macro_model and macro_model2..."
                 ):
 
                     comparison = (
                         build_macro_model_comparison(
-                            learning_df=(
-                                learning_df
-                            ),
-                            gpx_profile_df=(
-                                gpx_profile_df
-                            ),
+                            learning_df=learning_df,
+                            macro_model=macro_model,
+                            gpx_profile_df=gpx_profile_df,
                         )
                     )
 
@@ -1617,13 +1596,13 @@ if (
                 ] = comparison
 
                 st.success(
-                    "Macro Model comparison completed."
+                    "Macro model comparison completed."
                 )
 
             except Exception as exc:
 
                 st.error(
-                    f"Macro Model comparison failed: {exc}"
+                    f"Macro model comparison failed: {exc}"
                 )
 
                 st.exception(exc)
@@ -1637,7 +1616,7 @@ if (
     if macro_model_comparison is not None:
 
         # ---------------------------------------------------------------------
-        # Historical performance
+        # Historical FIT performance
         # ---------------------------------------------------------------------
 
         historical_comparison = (
@@ -1661,26 +1640,35 @@ if (
 
             historical_display[
                 "MAE"
-            ] = historical_display[
-                "mae_s"
-            ].map(
-                format_seconds
+            ] = (
+                historical_display[
+                    "mae_s"
+                ]
+                .map(
+                    format_seconds
+                )
             )
 
             historical_display[
                 "RMSE"
-            ] = historical_display[
-                "rmse_s"
-            ].map(
-                format_seconds
+            ] = (
+                historical_display[
+                    "rmse_s"
+                ]
+                .map(
+                    format_seconds
+                )
             )
 
             historical_display[
                 "Bias"
-            ] = historical_display[
-                "bias_s"
-            ].map(
-                format_seconds
+            ] = (
+                historical_display[
+                    "bias_s"
+                ]
+                .map(
+                    format_seconds
+                )
             )
 
             st.dataframe(
@@ -1700,7 +1688,7 @@ if (
             )
 
         # ---------------------------------------------------------------------
-        # Coefficient comparison
+        # Coefficients
         # ---------------------------------------------------------------------
 
         coefficient_comparison = (
@@ -1725,7 +1713,7 @@ if (
                 )
 
         # ---------------------------------------------------------------------
-        # SwissPeak GPX behaviour
+        # Current GPX behaviour
         # ---------------------------------------------------------------------
 
         gpx_summary = (
@@ -1749,18 +1737,24 @@ if (
 
             gpx_display[
                 "negative_time"
-            ] = gpx_display[
-                "negative_time_magnitude_s"
-            ].map(
-                format_seconds
+            ] = (
+                gpx_display[
+                    "negative_time_magnitude_s"
+                ]
+                .map(
+                    format_seconds
+                )
             )
 
             gpx_display[
                 "final_cumulative_time"
-            ] = gpx_display[
-                "final_cumulative_time_s"
-            ].map(
-                format_seconds
+            ] = (
+                gpx_display[
+                    "final_cumulative_time_s"
+                ]
+                .map(
+                    format_seconds
+                )
             )
 
             st.dataframe(
@@ -1776,7 +1770,7 @@ if (
             )
 
         # ---------------------------------------------------------------------
-        # Detailed GPX model comparison
+        # Detailed GPX comparison
         # ---------------------------------------------------------------------
 
         gpx_comparison = (
@@ -1791,7 +1785,7 @@ if (
         ):
 
             with st.expander(
-                "Detailed GPX Macro Model comparison",
+                "Detailed GPX macro comparison",
                 expanded=False,
             ):
 
@@ -1801,19 +1795,19 @@ if (
                 )
 
                 st.download_button(
-                    "Download Macro Model comparison",
+                    "Download macro-model comparison",
                     data=gpx_comparison.to_csv(
                         index=False
                     ),
                     file_name=(
-                        "macro_model_1_vs_macro_model_2.csv"
+                        "macro_model_vs_macro_model2.csv"
                     ),
                     mime="text/csv",
                     key="download_macro_comparison",
                 )
 
     # =========================================================================
-    # B. Existing simulation diagnostics
+    # Existing simulation diagnostics
     # =========================================================================
 
     if simulation_diagnostics is not None:
