@@ -14,14 +14,15 @@ from config import (
     LEARNING_STEP_M,
 )
 
-from diagnostics import (
-    build_macro_model_comparison,
-    build_simulation_diagnostics,
-)
-
 from fit_learning import (
     build_learning_dataset,
     summarize_learning_dataset,
+)
+
+from gpx_profile import (
+    build_gpx_profile,
+    load_raw_gpx_table,
+    summarize_gpx_profile,
 )
 
 from macro_model import (
@@ -32,10 +33,10 @@ from micro_model import (
     fit_micro_model,
 )
 
-from gpx_profile import (
-    build_gpx_profile,
-    load_raw_gpx_table,
-    summarize_gpx_profile,
+from race_validation import (
+    build_validation_section_summary,
+    compare_prediction_to_actual_fit,
+    summarize_validation,
 )
 
 from simulator import (
@@ -68,15 +69,23 @@ DEFAULT_STATE = {
     "learning_summary": None,
     "macro_model": None,
     "micro_model": None,
+
     "raw_gpx_df": None,
     "gpx_profile_df": None,
+
     "simulation_df": None,
     "race_summary": None,
-    "simulation_diagnostics": None,
-    "macro_model_comparison": None,
+
     "aid_stations": [],
+
     "fit_signature": None,
     "gpx_signature": None,
+
+    # Temporary post-race validation state.
+    "actual_race_comparison_df": None,
+    "actual_race_summary_df": None,
+    "actual_race_section_df": None,
+    "actual_race_signature": None,
 }
 
 for key, value in DEFAULT_STATE.items():
@@ -182,11 +191,19 @@ if (
     ] = None
 
     st.session_state[
-        "simulation_diagnostics"
+        "actual_race_comparison_df"
     ] = None
 
     st.session_state[
-        "macro_model_comparison"
+        "actual_race_summary_df"
+    ] = None
+
+    st.session_state[
+        "actual_race_section_df"
+    ] = None
+
+    st.session_state[
+        "actual_race_signature"
     ] = None
 
 
@@ -272,12 +289,24 @@ if uploaded_fit_files:
                     "race_summary"
                 ] = None
 
+                # -------------------------------------------------------------
+                # Any previous validation belongs to the previous prediction.
+                # -------------------------------------------------------------
+
                 st.session_state[
-                    "simulation_diagnostics"
+                    "actual_race_comparison_df"
                 ] = None
 
                 st.session_state[
-                    "macro_model_comparison"
+                    "actual_race_summary_df"
+                ] = None
+
+                st.session_state[
+                    "actual_race_section_df"
+                ] = None
+
+                st.session_state[
+                    "actual_race_signature"
                 ] = None
 
                 st.success(
@@ -416,7 +445,7 @@ if (
 
 
 # =============================================================================
-# Existing macro model summary
+# Macro model summary
 # =============================================================================
 
 if macro_model is not None:
@@ -578,11 +607,19 @@ if (
     ] = None
 
     st.session_state[
-        "simulation_diagnostics"
+        "actual_race_comparison_df"
     ] = None
 
     st.session_state[
-        "macro_model_comparison"
+        "actual_race_summary_df"
+    ] = None
+
+    st.session_state[
+        "actual_race_section_df"
+    ] = None
+
+    st.session_state[
+        "actual_race_signature"
     ] = None
 
 
@@ -966,11 +1003,19 @@ if save_aid_stations:
             ] = None
 
             st.session_state[
-                "simulation_diagnostics"
+                "actual_race_comparison_df"
             ] = None
 
             st.session_state[
-                "macro_model_comparison"
+                "actual_race_summary_df"
+            ] = None
+
+            st.session_state[
+                "actual_race_section_df"
+            ] = None
+
+            st.session_state[
+                "actual_race_signature"
             ] = None
 
         st.success(
@@ -1067,11 +1112,19 @@ if uploaded_gpx_file is not None:
             ] = None
 
             st.session_state[
-                "simulation_diagnostics"
+                "actual_race_comparison_df"
             ] = None
 
             st.session_state[
-                "macro_model_comparison"
+                "actual_race_summary_df"
+            ] = None
+
+            st.session_state[
+                "actual_race_section_df"
+            ] = None
+
+            st.session_state[
+                "actual_race_signature"
             ] = None
 
             st.success(
@@ -1246,19 +1299,26 @@ else:
                 "race_summary"
             ] = race_summary
 
-            with st.spinner(
-                "Building simulation diagnostics..."
-            ):
-
-                simulation_diagnostics = (
-                    build_simulation_diagnostics(
-                        simulation_df
-                    )
-                )
+            # -------------------------------------------------------------
+            # A new prediction invalidates any previous actual-race
+            # comparison.
+            # -------------------------------------------------------------
 
             st.session_state[
-                "simulation_diagnostics"
-            ] = simulation_diagnostics
+                "actual_race_comparison_df"
+            ] = None
+
+            st.session_state[
+                "actual_race_summary_df"
+            ] = None
+
+            st.session_state[
+                "actual_race_section_df"
+            ] = None
+
+            st.session_state[
+                "actual_race_signature"
+            ] = None
 
             st.success(
                 "Simulation completed."
@@ -1283,10 +1343,6 @@ simulation_df = st.session_state[
 
 race_summary = st.session_state[
     "race_summary"
-]
-
-simulation_diagnostics = st.session_state[
-    "simulation_diagnostics"
 ]
 
 
@@ -1481,36 +1537,6 @@ if (
         )
 
     # -------------------------------------------------------------------------
-    # Macro physical constraint
-    # -------------------------------------------------------------------------
-
-    st.subheader(
-        "Macro physical constraint"
-    )
-
-    col7, col8 = st.columns(2)
-
-    with col7:
-
-        st.metric(
-            "Clipped segments",
-            race_summary[
-                "macro_clipped_segments"
-            ],
-        )
-
-    with col8:
-
-        st.metric(
-            "Clipped time",
-            format_seconds(
-                race_summary[
-                    "macro_clipped_seconds"
-                ]
-            ),
-        )
-
-    # -------------------------------------------------------------------------
     # Simulation detail
     # -------------------------------------------------------------------------
 
@@ -1538,412 +1564,400 @@ if (
 
 
 # =============================================================================
-# 4. TEMPORARY DIAGNOSTICS
+# 4. ACTUAL RACE VALIDATION
+# =============================================================================
+#
+# This section appears ONLY after a prediction exists.
+#
+# The actual race FIT is deliberately isolated from:
+#
+#     - historical FIT learning;
+#     - macro model fitting;
+#     - micro model fitting;
+#     - GPX normalization;
+#     - race simulation.
+#
+# It is used only for post-prediction validation.
 # =============================================================================
 
-if learning_df is not None:
+if (
+    simulation_df is not None
+    and not simulation_df.empty
+):
 
     st.divider()
 
     st.header(
-        "Diagnostics"
+        "4. Actual race validation"
     )
 
-    # =========================================================================
-    # Macro model comparison
-    # =========================================================================
-
-    st.subheader(
-        "Macro model vs macro_model2"
+    st.write(
+        "Upload the actual FIT from the race only after the prediction "
+        "has been completed."
     )
 
-    st.caption(
-        "macro_model is the existing operational model. "
-        "macro_model2 is the experimental non-negative constrained model. "
-        "macro_model2 does not replace macro_model."
+    uploaded_actual_race_fit = st.file_uploader(
+        "Upload actual race FIT",
+        type=["fit"],
+        accept_multiple_files=False,
+        key="actual_race_fit_upload",
     )
 
-    if gpx_profile_df is None:
+    # -------------------------------------------------------------------------
+    # Actual FIT signature.
+    # -------------------------------------------------------------------------
 
-        st.info(
-            "Build the normalized GPX profile before running "
-            "the macro-model comparison."
+    def _build_actual_race_signature(
+        uploaded_file,
+    ):
+        if uploaded_file is None:
+            return None
+
+        return (
+            getattr(
+                uploaded_file,
+                "name",
+                "",
+            ),
+            getattr(
+                uploaded_file,
+                "size",
+                None,
+            ),
         )
 
-    else:
+    current_actual_race_signature = (
+        _build_actual_race_signature(
+            uploaded_actual_race_fit
+        )
+    )
+
+    if (
+        current_actual_race_signature
+        != st.session_state[
+            "actual_race_signature"
+        ]
+    ):
+
+        st.session_state[
+            "actual_race_signature"
+        ] = current_actual_race_signature
+
+        st.session_state[
+            "actual_race_comparison_df"
+        ] = None
+
+        st.session_state[
+            "actual_race_summary_df"
+        ] = None
+
+        st.session_state[
+            "actual_race_section_df"
+        ] = None
+
+    if uploaded_actual_race_fit is not None:
 
         if st.button(
-            "Run macro model comparison",
-            key="run_macro_model_comparison",
+            "Compare prediction with actual race",
+            type="primary",
+            key="compare_actual_race",
         ):
 
             try:
 
                 with st.spinner(
-                    "Comparing macro_model and macro_model2..."
+                    "Comparing prediction with actual race..."
                 ):
 
-                    comparison = (
-                        build_macro_model_comparison(
-                            learning_df=learning_df,
-                            macro_model=macro_model,
-                            gpx_profile_df=gpx_profile_df,
+                    (
+                        actual_race_comparison_df,
+                        actual_race_summary_df,
+                    ) = compare_prediction_to_actual_fit(
+                        simulation_df=(
+                            simulation_df
+                        ),
+                        actual_fit_file=(
+                            uploaded_actual_race_fit
+                        ),
+                    )
+
+                    actual_race_section_df = (
+                        build_validation_section_summary(
+                            actual_race_comparison_df
                         )
                     )
 
                 st.session_state[
-                    "macro_model_comparison"
-                ] = comparison
+                    "actual_race_comparison_df"
+                ] = actual_race_comparison_df
+
+                st.session_state[
+                    "actual_race_summary_df"
+                ] = actual_race_summary_df
+
+                st.session_state[
+                    "actual_race_section_df"
+                ] = actual_race_section_df
 
                 st.success(
-                    "Macro model comparison completed."
+                    "Prediction / actual-race comparison completed."
                 )
 
             except Exception as exc:
 
                 st.error(
-                    f"Macro model comparison failed: {exc}"
+                    f"Actual-race validation failed: {exc}"
                 )
 
                 st.exception(exc)
 
-    macro_model_comparison = (
-        st.session_state[
-            "macro_model_comparison"
-        ]
+
+# =============================================================================
+# Actual race validation results
+# =============================================================================
+
+actual_race_summary_df = (
+    st.session_state[
+        "actual_race_summary_df"
+    ]
+)
+
+actual_race_comparison_df = (
+    st.session_state[
+        "actual_race_comparison_df"
+    ]
+)
+
+actual_race_section_df = (
+    st.session_state[
+        "actual_race_section_df"
+    ]
+)
+
+
+if (
+    actual_race_summary_df is not None
+    and not actual_race_summary_df.empty
+):
+
+    st.subheader(
+        "Prediction vs actual race"
     )
 
-    if macro_model_comparison is not None:
+    display_summary = (
+        actual_race_summary_df.copy()
+    )
 
-        # ---------------------------------------------------------------------
-        # Historical FIT performance
-        # ---------------------------------------------------------------------
+    display_summary[
+        "predicted_finish"
+    ] = (
+        display_summary[
+            "predicted_finish_s"
+        ]
+        .map(
+            format_seconds
+        )
+    )
 
-        historical_comparison = (
-            macro_model_comparison.get(
-                "historical"
-            )
+    display_summary[
+        "actual_finish"
+    ] = (
+        display_summary[
+            "actual_finish_s"
+        ]
+        .map(
+            format_seconds
+        )
+    )
+
+    display_summary[
+        "finish_error"
+    ] = (
+        display_summary[
+            "finish_error_s"
+        ]
+        .map(
+            format_seconds
+        )
+    )
+
+    st.dataframe(
+        display_summary[
+            [
+                "model",
+                "predicted_finish",
+                "actual_finish",
+                "finish_error",
+                "finish_error_min",
+                "segment_mae_s",
+                "segment_rmse_s",
+                "segment_bias_s",
+            ]
+        ],
+        width="stretch",
+    )
+
+
+# =============================================================================
+# Actual race section comparison
+# =============================================================================
+
+if (
+    actual_race_section_df is not None
+    and not actual_race_section_df.empty
+):
+
+    st.subheader(
+        "Prediction error by race section"
+    )
+
+    st.dataframe(
+        actual_race_section_df,
+        width="stretch",
+    )
+
+
+# =============================================================================
+# Actual race cumulative-time comparison
+# =============================================================================
+
+if (
+    actual_race_comparison_df is not None
+    and not actual_race_comparison_df.empty
+):
+
+    st.subheader(
+        "Cumulative predicted vs actual time"
+    )
+
+    chart_df = (
+        actual_race_comparison_df[
+            [
+                "distance_km",
+                "actual_cumulative_time_s",
+                "macro_cumulative_time_s",
+                "micro_cumulative_time_s",
+            ]
+        ]
+        .copy()
+    )
+
+    chart_df[
+        "Actual"
+    ] = (
+        chart_df[
+            "actual_cumulative_time_s"
+        ]
+        / 3600.0
+    )
+
+    chart_df[
+        "Macro"
+    ] = (
+        chart_df[
+            "macro_cumulative_time_s"
+        ]
+        / 3600.0
+    )
+
+    chart_df[
+        "Micro"
+    ] = (
+        chart_df[
+            "micro_cumulative_time_s"
+        ]
+        / 3600.0
+    )
+
+    st.line_chart(
+        chart_df[
+            [
+                "distance_km",
+                "Actual",
+                "Macro",
+                "Micro",
+            ]
+        ].set_index(
+            "distance_km"
+        )
+    )
+
+    st.subheader(
+        "Cumulative prediction error"
+    )
+
+    error_chart_df = (
+        actual_race_comparison_df[
+            [
+                "distance_km",
+                "macro_error_s",
+                "micro_error_s",
+            ]
+        ]
+        .copy()
+    )
+
+    error_chart_df[
+        "Macro error (min)"
+    ] = (
+        error_chart_df[
+            "macro_error_s"
+        ]
+        / 60.0
+    )
+
+    error_chart_df[
+        "Micro error (min)"
+    ] = (
+        error_chart_df[
+            "micro_error_s"
+        ]
+        / 60.0
+    )
+
+    st.line_chart(
+        error_chart_df[
+            [
+                "distance_km",
+                "Macro error (min)",
+                "Micro error (min)",
+            ]
+        ].set_index(
+            "distance_km"
+        )
+    )
+
+    with st.expander(
+        "Detailed prediction / actual comparison",
+        expanded=False,
+    ):
+
+        st.dataframe(
+            actual_race_comparison_df.head(500),
+            width="stretch",
         )
 
-        if (
-            historical_comparison is not None
-            and not historical_comparison.empty
-        ):
-
-            st.markdown(
-                "#### Historical FIT performance"
-            )
-
-            historical_display = (
-                historical_comparison.copy()
-            )
-
-            historical_display[
-                "MAE"
-            ] = (
-                historical_display[
-                    "mae_s"
-                ]
-                .map(
-                    format_seconds
-                )
-            )
-
-            historical_display[
-                "RMSE"
-            ] = (
-                historical_display[
-                    "rmse_s"
-                ]
-                .map(
-                    format_seconds
-                )
-            )
-
-            historical_display[
-                "Bias"
-            ] = (
-                historical_display[
-                    "bias_s"
-                ]
-                .map(
-                    format_seconds
-                )
-            )
-
-            st.dataframe(
-                historical_display[
-                    [
-                        "model",
-                        "constraint",
-                        "training_rows",
-                        "training_activities",
-                        "MAE",
-                        "RMSE",
-                        "Bias",
-                        "r2",
-                    ]
-                ],
-                width="stretch",
-            )
-
-        # ---------------------------------------------------------------------
-        # Coefficients
-        # ---------------------------------------------------------------------
-
-        coefficient_comparison = (
-            macro_model_comparison.get(
-                "coefficients"
-            )
+        st.download_button(
+            "Download prediction vs actual comparison",
+            data=actual_race_comparison_df.to_csv(
+                index=False
+            ),
+            file_name=(
+                "prediction_vs_actual_race.csv"
+            ),
+            mime="text/csv",
+            key="download_actual_race_comparison",
         )
 
-        if (
-            coefficient_comparison is not None
-            and not coefficient_comparison.empty
-        ):
-
-            with st.expander(
-                "Macro coefficients",
-                expanded=False,
-            ):
-
-                st.dataframe(
-                    coefficient_comparison,
-                    width="stretch",
-                )
-
-        # ---------------------------------------------------------------------
-        # Current GPX behaviour
-        # ---------------------------------------------------------------------
-
-        gpx_summary = (
-            macro_model_comparison.get(
-                "gpx_summary"
-            )
+        st.download_button(
+            "Download validation summary",
+            data=actual_race_summary_df.to_csv(
+                index=False
+            ),
+            file_name=(
+                "prediction_vs_actual_summary.csv"
+            ),
+            mime="text/csv",
+            key="download_actual_race_summary",
         )
-
-        if (
-            gpx_summary is not None
-            and not gpx_summary.empty
-        ):
-
-            st.markdown(
-                "#### Behaviour on current normalized GPX"
-            )
-
-            gpx_display = (
-                gpx_summary.copy()
-            )
-
-            gpx_display[
-                "negative_time"
-            ] = (
-                gpx_display[
-                    "negative_time_magnitude_s"
-                ]
-                .map(
-                    format_seconds
-                )
-            )
-
-            gpx_display[
-                "final_cumulative_time"
-            ] = (
-                gpx_display[
-                    "final_cumulative_time_s"
-                ]
-                .map(
-                    format_seconds
-                )
-            )
-
-            st.dataframe(
-                gpx_display[
-                    [
-                        "model",
-                        "negative_segments",
-                        "negative_time",
-                        "final_cumulative_time",
-                    ]
-                ],
-                width="stretch",
-            )
-
-        # ---------------------------------------------------------------------
-        # Detailed GPX comparison
-        # ---------------------------------------------------------------------
-
-        gpx_comparison = (
-            macro_model_comparison.get(
-                "gpx"
-            )
-        )
-
-        if (
-            gpx_comparison is not None
-            and not gpx_comparison.empty
-        ):
-
-            with st.expander(
-                "Detailed GPX macro comparison",
-                expanded=False,
-            ):
-
-                st.dataframe(
-                    gpx_comparison.head(500),
-                    width="stretch",
-                )
-
-                st.download_button(
-                    "Download macro-model comparison",
-                    data=gpx_comparison.to_csv(
-                        index=False
-                    ),
-                    file_name=(
-                        "macro_model_vs_macro_model2.csv"
-                    ),
-                    mime="text/csv",
-                    key="download_macro_comparison",
-                )
-
-    # =========================================================================
-    # Existing simulation diagnostics
-    # =========================================================================
-
-    if simulation_diagnostics is not None:
-
-        # ---------------------------------------------------------------------
-        # Cumulative macro vs micro
-        # ---------------------------------------------------------------------
-
-        divergence_df = (
-            simulation_diagnostics.get(
-                "simulation_divergence"
-            )
-        )
-
-        if (
-            divergence_df is not None
-            and not divergence_df.empty
-        ):
-
-            st.subheader(
-                "Cumulative macro vs micro"
-            )
-
-            chart_df = divergence_df[
-                [
-                    "distance_km",
-                    "macro_cumulative_time_h",
-                    "micro_cumulative_time_h",
-                ]
-            ].copy()
-
-            st.line_chart(
-                chart_df.set_index(
-                    "distance_km"
-                )
-            )
-
-            st.subheader(
-                "Micro minus macro cumulative difference"
-            )
-
-            divergence_chart_df = (
-                divergence_df[
-                    [
-                        "distance_km",
-                        "micro_minus_macro_cumulative_min",
-                    ]
-                ]
-                .copy()
-                .set_index(
-                    "distance_km"
-                )
-            )
-
-            st.line_chart(
-                divergence_chart_df
-            )
-
-        # ---------------------------------------------------------------------
-        # Checkpoints
-        # ---------------------------------------------------------------------
-
-        checkpoints_df = (
-            simulation_diagnostics.get(
-                "simulation_checkpoints"
-            )
-        )
-
-        if (
-            checkpoints_df is not None
-            and not checkpoints_df.empty
-        ):
-
-            st.subheader(
-                "Prediction divergence checkpoints"
-            )
-
-            st.dataframe(
-                checkpoints_df,
-                width="stretch",
-            )
-
-        # ---------------------------------------------------------------------
-        # Course sections
-        # ---------------------------------------------------------------------
-
-        sections_df = (
-            simulation_diagnostics.get(
-                "simulation_sections"
-            )
-        )
-
-        if (
-            sections_df is not None
-            and not sections_df.empty
-        ):
-
-            st.subheader(
-                "Prediction divergence by course section"
-            )
-
-            st.dataframe(
-                sections_df,
-                width="stretch",
-            )
-
-        # ---------------------------------------------------------------------
-        # Macro clipping diagnostics
-        # ---------------------------------------------------------------------
-
-        clipping_df = (
-            simulation_diagnostics.get(
-                "macro_clipping"
-            )
-        )
-
-        if (
-            clipping_df is not None
-            and not clipping_df.empty
-        ):
-
-            st.subheader(
-                "Macro clipped segments"
-            )
-
-            st.dataframe(
-                clipping_df,
-                width="stretch",
-            )
-
-        elif (
-            clipping_df is not None
-            and clipping_df.empty
-        ):
-
-            st.success(
-                "No macro negative-duration segments were clipped."
-            )
-            
+        
